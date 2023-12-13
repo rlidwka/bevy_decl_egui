@@ -552,18 +552,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_decl_egui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bevy",
- "bevy-inspector-egui",
- "jomini",
- "serde",
- "serde-value",
-]
-
-[[package]]
 name = "bevy_derive"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1097,6 +1085,19 @@ dependencies = [
  "smallvec",
  "taffy",
  "thiserror",
+]
+
+[[package]]
+name = "bevy_uiconf_egui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "bevy-inspector-egui",
+ "downcast-rs",
+ "jomini",
+ "serde",
+ "serde-value",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "bevy_decl_egui"
+name = "bevy_uiconf_egui"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,6 +10,7 @@ opt-level = 3
 anyhow = "1.0.75"
 bevy = { version = "0.12.1", features = ["dynamic_linking", "file_watcher"] }
 bevy-inspector-egui = "0.21.0"
+downcast-rs = "1.2.0"
 jomini = "0.24.0"
 serde = "1.0.193"
 serde-value = "0.7.0"

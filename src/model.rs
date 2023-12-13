@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use serde::de::{Error, MapAccess, SeqAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer};
 
+use crate::loader::LabelToId;
 use crate::{const_concat, egui};
 
 //
@@ -17,6 +18,33 @@ pub struct Root {
 
 impl Root {
     const FIELDS: &'static [&'static str] = &["window"];
+
+    pub fn assign_ids<L: crate::Label>(mut self) -> Self {
+        for mut content in self.window.content.iter_mut() {
+            let name = match &content {
+                Content::Label(desc)     => desc.name.clone(),
+                Content::Separator(desc) => desc.name.clone(),
+            };
+
+            let Some(name) = &name else { continue; };
+
+            let parsed: Result<L, serde_value::DeserializerError> = L::deserialize(serde_value::ValueDeserializer::new(
+                serde_value::Value::String(name.into()),
+            ));
+            let Ok(parsed) = parsed else {
+                bevy::log::warn!("invalid widget name: `{}`", name);
+                continue;
+            };
+
+            let id: egui::Id = parsed.to_id();
+
+            match &mut content {
+                Content::Label(desc)     => { desc.id = Some(id); }
+                Content::Separator(desc) => { desc.id = Some(id); }
+            }
+        }
+        self
+    }
 }
 
 impl<'de> Deserialize<'de> for Root {
@@ -139,7 +167,6 @@ impl<'de> Deserialize<'de> for Window {
 
 #[derive(Debug, Clone)]
 pub enum WindowProperty {
-    Id(egui::Id),
     Anchor(Anchor),
     TitleBar(bool),
 
@@ -167,7 +194,6 @@ impl WindowProperty {
 
     fn deserialize_map_value<'de, A: MapAccess<'de>>(tag: &str, map: &mut A) -> Result<Self, A::Error> {
         match tag {
-            "id"           => Ok(WindowProperty::Id           (egui::Id::new(map.next_value::<&str>()?))),
             "anchor"       => Ok(WindowProperty::Anchor       (map.next_value()?)),
             "title_bar"    => Ok(WindowProperty::TitleBar     (map.next_value()?)),
             "default_size" => Ok(WindowProperty::DefaultSize  (map.next_value::<Size<{ SIZE_ANY_DISALLOWED }>>()?.0)),
@@ -192,7 +218,7 @@ impl WindowProperty {
 #[derive(Debug, Clone)]
 pub enum Content {
     Label(Label),
-    Separator,
+    Separator(Separator),
 }
 
 impl Content {
@@ -200,12 +226,9 @@ impl Content {
 
     fn deserialize_map_value<'de, A: MapAccess<'de>>(tag: &str, map: &mut A) -> Result<Self, A::Error> {
         match tag {
-            "label" => Ok(Content::Label(map.next_value()?)),
-            "separator" => {
-                map.next_value::<Empty>()?;
-                Ok(Content::Separator)
-            },
-            _ => Err(Error::unknown_field(tag, Content::FIELDS)),
+            "label"     => Ok(Content::Label(map.next_value()?)),
+            "separator" => Ok(Content::Separator(map.next_value()?)),
+            _           => Err(Error::unknown_field(tag, Content::FIELDS)),
         }
     }
 }
@@ -248,13 +271,13 @@ impl<'de> Deserialize<'de> for Anchor {
 
                 let align = egui::Align2([
                     match align_x {
-                        Alignment::Left => egui::Align::Min,
+                        Alignment::Left   => egui::Align::Min,
                         Alignment::Center => egui::Align::Center,
-                        Alignment::Right => egui::Align::Max,
+                        Alignment::Right  => egui::Align::Max,
                         _ => unreachable!(),
                     },
                     match align_y {
-                        Alignment::Top => egui::Align::Min,
+                        Alignment::Top    => egui::Align::Min,
                         Alignment::Center => egui::Align::Center,
                         Alignment::Bottom => egui::Align::Max,
                         _ => unreachable!(),
@@ -441,11 +464,17 @@ pub enum RichTextStyle {
 
 #[derive(Debug, Clone)]
 pub struct Label {
-    pub text: String,
+    pub id: Option<egui::Id>,
+    pub name: Option<String>,
+    pub text: RichText,
+    pub props: Vec<LabelProperty>,
 }
 
 impl Label {
-    const FIELDS: &'static [&'static str] = &["text"];
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["name", "text"],
+        LabelProperty::FIELDS,
+    );
 }
 
 impl<'de> Deserialize<'de> for Label {
@@ -459,33 +488,149 @@ impl<'de> Deserialize<'de> for Label {
                 formatter.write_str("\"text\" or { text = .. }")
             }
 
-            fn visit_map<A: MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut name = None;
                 let mut text = None;
+                let mut props = vec![];
 
                 while let Some(str) = map.next_key::<&str>()? {
                     match str {
+                        "name" => {
+                            if name.is_some() { return Err(Error::duplicate_field("name")); }
+                            name = Some(map.next_value()?);
+                        }
                         "text" => {
                             if text.is_some() { return Err(Error::duplicate_field("text")); }
                             text = Some(map.next_value()?);
                         }
-                        _ => { return Err(Error::unknown_field(str, Label::FIELDS)); }
+                        str => {
+                            props.push(LabelProperty::deserialize_map_value(str, &mut map)?);
+                        }
                     }
                 }
 
                 let text = text.ok_or_else(|| Error::missing_field("text"))?;
 
-                Ok(Label { text })
+                Ok(Label { id: None, name, text, props })
             }
 
             fn visit_str<E: Error>(self, value: &str) -> Result<Self::Value, E> {
-                Ok(Label { text: value.to_string() })
+                Ok(Label {
+                    id: None,
+                    name: None,
+                    text: RichText(egui::RichText::new(value)),
+                    props: vec![],
+                })
             }
         }
 
         deserializer.deserialize_struct("label", Self::FIELDS, TVisitor)
+    }
+}
+
+//
+// LabelProperty
+//
+
+#[derive(Debug, Clone)]
+pub enum LabelProperty {
+    Wrap(bool),
+    Truncate(bool),
+    Sense(Sense),
+}
+
+impl LabelProperty {
+    const FIELDS: &'static [&'static str] = &["wrap", "truncate", "sense"];
+
+    fn deserialize_map_value<'de, A: MapAccess<'de>>(tag: &str, map: &mut A) -> Result<Self, A::Error> {
+        match tag {
+            "wrap"     => Ok(LabelProperty::Wrap     (map.next_value()?)),
+            "truncate" => Ok(LabelProperty::Truncate (map.next_value()?)),
+            "sense"    => Ok(LabelProperty::Sense    (map.next_value()?)),
+            _          => Err(Error::unknown_field(tag, WindowProperty::FIELDS)),
+        }
+    }
+}
+
+//
+// Separator
+//
+
+#[derive(Debug, Clone)]
+pub struct Separator {
+    pub id: Option<egui::Id>,
+    pub name: Option<String>,
+    pub props: Vec<SeparatorProperty>,
+}
+
+impl Separator {
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["name"],
+        SeparatorProperty::FIELDS,
+    );
+}
+
+impl<'de> Deserialize<'de> for Separator {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Separator;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("{}")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut name = None;
+                let mut props = vec![];
+
+                while let Some(str) = map.next_key::<&str>()? {
+                    match str {
+                        "name" => {
+                            if name.is_some() { return Err(Error::duplicate_field("name")); }
+                            name = Some(map.next_value()?);
+                        }
+                        str => { props.push(SeparatorProperty::deserialize_map_value(str, &mut map)?); }
+                    }
+                }
+
+                Ok(Separator { id: None, name, props })
+            }
+        }
+
+        deserializer.deserialize_struct("separator", Self::FIELDS, TVisitor)
+    }
+}
+
+//
+// SeparatorProperty
+//
+
+#[derive(Debug, Clone)]
+pub enum SeparatorProperty {
+    Spacing(f32),
+    Horizontal(bool),
+    Vertical(bool),
+    Grow(f32),
+    Shrink(f32),
+}
+
+impl SeparatorProperty {
+    const FIELDS: &'static [&'static str] = &["spacing", "horizontal", "vertical", "grow", "shrink"];
+
+    fn deserialize_map_value<'de, A: MapAccess<'de>>(
+        tag: &str,
+        map: &mut A,
+    ) -> Result<Self, A::Error> {
+        match tag {
+            "spacing"    => Ok(SeparatorProperty::Spacing    (map.next_value()?)),
+            "horizontal" => Ok(SeparatorProperty::Horizontal (map.next_value()?)),
+            "vertical"   => Ok(SeparatorProperty::Vertical   (map.next_value()?)),
+            "grow"       => Ok(SeparatorProperty::Grow       (map.next_value()?)),
+            "shrink"     => Ok(SeparatorProperty::Shrink     (map.next_value()?)),
+            _            => Err(Error::unknown_field(tag, SeparatorProperty::FIELDS)),
+        }
     }
 }
 
@@ -517,11 +662,12 @@ impl ToString for Alignment {
     fn to_string(&self) -> String {
         match self {
             Alignment::Center => "center",
-            Alignment::Left => "left",
-            Alignment::Right => "right",
-            Alignment::Top => "top",
+            Alignment::Left   => "left",
+            Alignment::Right  => "right",
+            Alignment::Top    => "top",
             Alignment::Bottom => "bottom",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
@@ -623,6 +769,74 @@ impl From<ColorName> for egui::Color32 {
             ColorName::DebugColor     => egui::Color32::DEBUG_COLOR,
             ColorName::TemporaryColor => egui::Color32::TEMPORARY_COLOR,
         }
+    }
+}
+
+//
+// Sense
+//
+
+#[derive(Debug, Clone)]
+pub struct Sense(pub egui::Sense);
+
+impl<'de> Deserialize<'de> for Sense {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Sense;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("{ click drag focusable }")
+            }
+
+            fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "snake_case")]
+                enum SenseKind {
+                    Hover,
+                    FocusableNoninteractive,
+                    Click,
+                    Drag,
+                    ClickAndDrag,
+                }
+
+                let value = serde_value::Value::String(v.into());
+                let deserializer = serde_value::ValueDeserializer::new(value);
+                let sense_kind = SenseKind::deserialize(deserializer)?;
+                let sense = match sense_kind {
+                    SenseKind::Hover                   => egui::Sense::hover(),
+                    SenseKind::FocusableNoninteractive => egui::Sense::focusable_noninteractive(),
+                    SenseKind::Click                   => egui::Sense::click(),
+                    SenseKind::Drag                    => egui::Sense::drag(),
+                    SenseKind::ClickAndDrag            => egui::Sense::click_and_drag(),
+                };
+                Ok(Sense(sense))
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                #[derive(Deserialize)]
+                enum SenseType {
+                    Click,
+                    Drag,
+                    Focusable,
+                }
+
+                let mut sense = egui::Sense::hover();
+
+                while let Some(sense_type) = seq.next_element::<SenseType>()? {
+                    match sense_type {
+                        SenseType::Click     => sense.click = true,
+                        SenseType::Drag      => sense.drag = true,
+                        SenseType::Focusable => sense.focusable = true,
+                    }
+                }
+
+                Ok(Sense(sense))
+            }
+        }
+
+        deserializer.deserialize_any(TVisitor)
     }
 }
 

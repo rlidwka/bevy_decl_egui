@@ -1,21 +1,24 @@
 window = {
-    id = "mywindow"
 	title = {
         text = "Work In Progress"
         color = { 200 255 255 }
         style = { strong }
     }
 
-    anchor = { center center 0 0 }
+    #anchor = { center center 0 0 }
     enabled = yes
     collapsible = yes
-    movable = no
+    movable = yes
     default_size = { 300 300 }
     min_size = { 100 any }
 
     label = "I'm trying out the idea of having egui configuration loaded as bevy asset."
-    separator = {}
+    separator = {
+        name = "my_label"
+    }
     label = {
+        #name = "my_label"
         text = "Because fine-tuning UI is such a common task, and the idea of recompiling shit on every change sucks."
+        sense = click
     }
 }
