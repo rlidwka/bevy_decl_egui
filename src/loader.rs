@@ -123,17 +123,41 @@ impl<'a, L: Label> EguiWidgetBuilder<'a, L> {
             .show(ctx, |ui| {
                 for content in &desc.content {
                     match content {
+                        model::Content::Button(desc) => {
+                            display_widget::<egui::Button>(
+                                ui, desc.name.as_ref(), &mut self.commands,
+                                || egui::Button::new(desc.text.0.clone()),
+                                |mut button| {
+                                    if desc.small { button = button.small(); }
+                                    for prop in desc.props.iter() {
+                                        use model::ButtonProperty as P;
+                                        button = match prop {
+                                            P::ShortcutText(text) => button.shortcut_text(text.0.clone()),
+                                            P::Wrap(wrap)         => button.wrap(*wrap),
+                                            P::Fill(color)        => button.fill(*color),
+                                            P::Stroke(stroke)     => button.stroke(*stroke),
+                                            P::Sense(sense)       => button.sense(sense.0),
+                                            P::Frame(frame)       => button.frame(*frame),
+                                            P::MinSize(size)      => button.min_size(*size),
+                                            P::Rounding(rounding) => button.rounding(*rounding),
+                                            P::Selected(selected) => button.selected(*selected),
+                                        };
+                                    }
+                                    button
+                                },
+                            );
+                        }
                         model::Content::Label(desc) => {
                             display_widget::<egui::Label>(
-                                ui, desc.id, desc.name.as_deref(), &mut self.commands,
+                                ui, desc.name.as_ref(), &mut self.commands,
                                 || egui::Label::new(desc.text.0.clone()),
                                 |mut label| {
                                     for prop in desc.props.iter() {
                                         use model::LabelProperty as P;
                                         label = match prop {
-                                            P::Wrap(wrap) => label.wrap(*wrap),
+                                            P::Wrap(wrap)         => label.wrap(*wrap),
                                             P::Truncate(truncate) => label.truncate(*truncate),
-                                            P::Sense(sense) => label.sense(sense.0),
+                                            P::Sense(sense)       => label.sense(sense.0),
                                         }
                                     }
                                     label
@@ -142,25 +166,22 @@ impl<'a, L: Label> EguiWidgetBuilder<'a, L> {
                         }
                         model::Content::Separator(desc) => {
                             display_widget::<egui::Separator>(
-                                ui, desc.id, desc.name.as_deref(), &mut self.commands,
+                                ui, desc.name.as_ref(), &mut self.commands,
                                 egui::Separator::default,
                                 |mut separator| {
+                                    if let Some(is_horizontal_line) = desc.is_horizontal {
+                                        if is_horizontal_line {
+                                            separator = separator.horizontal();
+                                        } else {
+                                            separator = separator.vertical();
+                                        }
+                                    }
                                     for prop in desc.props.iter() {
                                         use model::SeparatorProperty as P;
                                         separator = match prop {
                                             P::Spacing(spacing) => separator.spacing(*spacing),
-                                            P::Horizontal(horizontal) => if *horizontal {
-                                                separator.horizontal()
-                                            } else {
-                                                separator.vertical()
-                                            }
-                                            P::Vertical(vertical) => if *vertical {
-                                                separator.vertical()
-                                            } else {
-                                                separator.horizontal()
-                                            }
-                                            P::Grow(grow) => separator.grow(*grow),
-                                            P::Shrink(shrink) => separator.shrink(*shrink),
+                                            P::Grow(grow)       => separator.grow(*grow),
+                                            P::Shrink(shrink)   => separator.shrink(*shrink),
                                         }
                                     }
                                     separator
@@ -175,38 +196,37 @@ impl<'a, L: Label> EguiWidgetBuilder<'a, L> {
 
 fn display_widget<W: Widget + 'static>(
     ui: &mut egui::Ui,
-    id: Option<egui::Id>,
-    name: Option<&str>,
+    name: Option<&model::Name>,
     commands: &mut HashMap<egui::Id, WidgetCommand>,
     default: impl FnOnce() -> W,
     attach_props: impl FnOnce(W) -> W,
 ) {
-    fn get_command_for_widget_with_id(
-        commands: &mut HashMap<egui::Id, WidgetCommand>,
-        id: Option<egui::Id>,
-    ) -> Option<&mut WidgetCommand> {
-        let Some(id) = id else { return None; };
-        let Some(command) = commands.get_mut(&id) else { return None; };
+    fn get_command_for_widget_with_id<'a>(
+        commands: &'a mut HashMap<egui::Id, WidgetCommand>,
+        name: Option<&model::Name>,
+    ) -> Option<&'a mut WidgetCommand> {
+        let Some(name) = name else { return None; };
+        let Some(command) = commands.get_mut(name.id.as_ref().unwrap()) else { return None; };
         Some(command)
     }
 
     fn get_default_widget_with_id<W: Widget + 'static>(
         command: &mut WidgetCommand,
-        name: Option<&str>,
+        name: Option<&model::Name>,
     ) -> Option<W> {
         let Some(w) = command.widget.take() else { return None; };
 
         let Ok(w) = w.downcast::<W>().map_err(|_| {
             bevy::log::info!(
                 "type mismatch for widget `{:?}`",
-                name.unwrap_or(""),
+                name.as_ref().map(|name| name.str.as_str()).unwrap_or(""),
             );
         }) else { return None; };
 
         Some(*w)
     }
 
-    let mut command = get_command_for_widget_with_id(commands, id);
+    let mut command = get_command_for_widget_with_id(commands, name);
 
     let mut widget = None;
     if command.is_some() {
@@ -229,7 +249,7 @@ fn display_widget<W: Widget + 'static>(
         } else {
             bevy::log::info!(
                 "type mismatch for widget `{:?}`",
-                name.unwrap_or(""),
+                name.as_ref().map(|name| name.str.as_str()).unwrap_or(""),
             );
         }
     }

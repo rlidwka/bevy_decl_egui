@@ -64,9 +64,9 @@ fn display_custom_window(
         //label.spacing(10.)
         label.sense(egui::Sense::click_and_drag())
     });
-    ui.on_response(MyWidgets::MyLabel, |response| {
+    /*ui.on_response(MyWidgets::MyLabel, |response| {
         dbg!(response.clicked());
-    });
+    });*/
     ui.show(egui_contexts.ctx_mut());
 
 

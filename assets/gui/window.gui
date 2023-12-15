@@ -14,11 +14,14 @@ window = {
 
     label = "I'm trying out the idea of having egui configuration loaded as bevy asset."
     separator = {
-        name = "my_label"
     }
     label = {
-        #name = "my_label"
+        name = "my_label"
         text = "Because fine-tuning UI is such a common task, and the idea of recompiling shit on every change sucks."
         sense = click
+    }
+    button = {
+        text = "ok"
+        rounding = 2
     }
 }

@@ -21,27 +21,23 @@ impl Root {
 
     pub fn assign_ids<L: crate::Label>(mut self) -> Self {
         for mut content in self.window.content.iter_mut() {
-            let name = match &content {
-                Content::Label(desc)     => desc.name.clone(),
-                Content::Separator(desc) => desc.name.clone(),
+            let mut name = match &mut content {
+                Content::Button(desc)    => &mut desc.name,
+                Content::Label(desc)     => &mut desc.name,
+                Content::Separator(desc) => &mut desc.name,
             };
 
-            let Some(name) = &name else { continue; };
+            let Some(name) = &mut name else { continue; };
 
             let parsed: Result<L, serde_value::DeserializerError> = L::deserialize(serde_value::ValueDeserializer::new(
-                serde_value::Value::String(name.into()),
+                serde_value::Value::String(name.str.clone()),
             ));
             let Ok(parsed) = parsed else {
-                bevy::log::warn!("invalid widget name: `{}`", name);
+                bevy::log::warn!("invalid widget name: `{}`", &name.str);
                 continue;
             };
 
-            let id: egui::Id = parsed.to_id();
-
-            match &mut content {
-                Content::Label(desc)     => { desc.id = Some(id); }
-                Content::Separator(desc) => { desc.id = Some(id); }
-            }
+            name.id = Some(parsed.to_id());
         }
         self
     }
@@ -217,17 +213,19 @@ impl WindowProperty {
 
 #[derive(Debug, Clone)]
 pub enum Content {
+    Button(Button),
     Label(Label),
     Separator(Separator),
 }
 
 impl Content {
-    const FIELDS: &'static [&'static str] = &["label", "separator"];
+    const FIELDS: &'static [&'static str] = &["button", "label", "separator"];
 
     fn deserialize_map_value<'de, A: MapAccess<'de>>(tag: &str, map: &mut A) -> Result<Self, A::Error> {
         match tag {
-            "label"     => Ok(Content::Label(map.next_value()?)),
-            "separator" => Ok(Content::Separator(map.next_value()?)),
+            "button"    => Ok(Content::Button    (map.next_value()?)),
+            "label"     => Ok(Content::Label     (map.next_value()?)),
+            "separator" => Ok(Content::Separator (map.next_value()?)),
             _           => Err(Error::unknown_field(tag, Content::FIELDS)),
         }
     }
@@ -459,13 +457,124 @@ pub enum RichTextStyle {
 }
 
 //
+// Button
+//
+
+#[derive(Debug, Clone)]
+pub struct Button {
+    pub name: Option<Name>,
+    pub text: RichText,
+    pub small: bool,
+    pub props: Vec<ButtonProperty>,
+}
+
+impl Button {
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["name", "text", "small"],
+        ButtonProperty::FIELDS,
+    );
+}
+
+impl<'de> Deserialize<'de> for Button {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Button;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("\"text\" or { text = .. }")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut name = None;
+                let mut text = None;
+                let mut small = false;
+                let mut props = vec![];
+
+                while let Some(str) = map.next_key::<&str>()? {
+                    match str {
+                        "name" => {
+                            if name.is_some() { return Err(Error::duplicate_field("name")); }
+                            name = Some(map.next_value()?);
+                        }
+                        "text" => {
+                            if text.is_some() { return Err(Error::duplicate_field("text")); }
+                            text = Some(map.next_value()?);
+                        }
+                        "small" => {
+                            small = map.next_value()?;
+                        }
+                        str => {
+                            props.push(ButtonProperty::deserialize_map_value(str, &mut map)?);
+                        }
+                    }
+                }
+
+                let text = text.ok_or_else(|| Error::missing_field("text"))?;
+
+                Ok(Button { name, text, small, props })
+            }
+
+            fn visit_str<E: Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(Button {
+                    name: None,
+                    text: RichText(egui::RichText::new(value)),
+                    small: false,
+                    props: vec![],
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("button", Self::FIELDS, TVisitor)
+    }
+}
+
+//
+// ButtonProperty
+//
+
+#[derive(Debug, Clone)]
+pub enum ButtonProperty {
+    ShortcutText(RichText),
+    Wrap(bool),
+    Fill(egui::Color32),
+    Stroke(egui::Stroke),
+    Sense(Sense),
+    Frame(bool),
+    MinSize(egui::Vec2),
+    Rounding(egui::Rounding),
+    Selected(bool),
+}
+
+impl ButtonProperty {
+    const FIELDS: &'static [&'static str] = &[
+        "shortcut_text", "wrap", "fill", "stroke", "sense", "frame", "min_size", "rounding", "selected",
+    ];
+
+    fn deserialize_map_value<'de, A: MapAccess<'de>>(tag: &str, map: &mut A) -> Result<Self, A::Error> {
+        match tag {
+            "shortcut_text" => Ok(ButtonProperty::ShortcutText (map.next_value()?)),
+            "wrap"          => Ok(ButtonProperty::Wrap         (map.next_value()?)),
+            "fill"          => Ok(ButtonProperty::Fill         (map.next_value::<Color>()?.0)),
+            "stroke"        => Ok(ButtonProperty::Stroke       (map.next_value::<Stroke>()?.0)),
+            "sense"         => Ok(ButtonProperty::Sense        (map.next_value()?)),
+            "frame"         => Ok(ButtonProperty::Frame        (map.next_value()?)),
+            "min_size"      => Ok(ButtonProperty::MinSize      (map.next_value::<Size<{ SIZE_ANY_IS_ZERO }>>()?.0)),
+            "rounding"      => Ok(ButtonProperty::Rounding     (map.next_value::<Rounding>()?.0)),
+            "selected"      => Ok(ButtonProperty::Selected     (map.next_value()?)),
+            _               => Err(Error::unknown_field(tag, ButtonProperty::FIELDS)),
+        }
+    }
+}
+
+//
 // Label
 //
 
 #[derive(Debug, Clone)]
 pub struct Label {
-    pub id: Option<egui::Id>,
-    pub name: Option<String>,
+    pub name: Option<Name>,
     pub text: RichText,
     pub props: Vec<LabelProperty>,
 }
@@ -511,12 +620,11 @@ impl<'de> Deserialize<'de> for Label {
 
                 let text = text.ok_or_else(|| Error::missing_field("text"))?;
 
-                Ok(Label { id: None, name, text, props })
+                Ok(Label { name, text, props })
             }
 
             fn visit_str<E: Error>(self, value: &str) -> Result<Self::Value, E> {
                 Ok(Label {
-                    id: None,
                     name: None,
                     text: RichText(egui::RichText::new(value)),
                     props: vec![],
@@ -558,14 +666,14 @@ impl LabelProperty {
 
 #[derive(Debug, Clone)]
 pub struct Separator {
-    pub id: Option<egui::Id>,
-    pub name: Option<String>,
+    pub name: Option<Name>,
+    pub is_horizontal: Option<bool>,
     pub props: Vec<SeparatorProperty>,
 }
 
 impl Separator {
     const FIELDS: &'static [&'static str] = const_concat!(
-        &["name"],
+        &["name", "horizontal", "vertical"],
         SeparatorProperty::FIELDS,
     );
 }
@@ -583,6 +691,7 @@ impl<'de> Deserialize<'de> for Separator {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut name = None;
+                let mut is_horizontal = None;
                 let mut props = vec![];
 
                 while let Some(str) = map.next_key::<&str>()? {
@@ -591,11 +700,13 @@ impl<'de> Deserialize<'de> for Separator {
                             if name.is_some() { return Err(Error::duplicate_field("name")); }
                             name = Some(map.next_value()?);
                         }
+                        "horizontal" => { is_horizontal = Some(map.next_value::<bool>()?); }
+                        "vertical"   => { is_horizontal = Some(!map.next_value::<bool>()?); }
                         str => { props.push(SeparatorProperty::deserialize_map_value(str, &mut map)?); }
                     }
                 }
 
-                Ok(Separator { id: None, name, props })
+                Ok(Separator { name, is_horizontal, props })
             }
         }
 
@@ -610,14 +721,12 @@ impl<'de> Deserialize<'de> for Separator {
 #[derive(Debug, Clone)]
 pub enum SeparatorProperty {
     Spacing(f32),
-    Horizontal(bool),
-    Vertical(bool),
     Grow(f32),
     Shrink(f32),
 }
 
 impl SeparatorProperty {
-    const FIELDS: &'static [&'static str] = &["spacing", "horizontal", "vertical", "grow", "shrink"];
+    const FIELDS: &'static [&'static str] = &["spacing", "grow", "shrink"];
 
     fn deserialize_map_value<'de, A: MapAccess<'de>>(
         tag: &str,
@@ -625,12 +734,40 @@ impl SeparatorProperty {
     ) -> Result<Self, A::Error> {
         match tag {
             "spacing"    => Ok(SeparatorProperty::Spacing    (map.next_value()?)),
-            "horizontal" => Ok(SeparatorProperty::Horizontal (map.next_value()?)),
-            "vertical"   => Ok(SeparatorProperty::Vertical   (map.next_value()?)),
             "grow"       => Ok(SeparatorProperty::Grow       (map.next_value()?)),
             "shrink"     => Ok(SeparatorProperty::Shrink     (map.next_value()?)),
             _            => Err(Error::unknown_field(tag, SeparatorProperty::FIELDS)),
         }
+    }
+}
+
+//
+// Name
+//
+
+#[derive(Debug, Clone)]
+pub struct Name {
+    pub id: Option<egui::Id>,
+    pub str: String,
+}
+
+impl<'de> Deserialize<'de> for Name {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Name;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("string")
+            }
+
+            fn visit_str<E: Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(Name { id: None, str: value.to_string() })
+            }
+        }
+
+        deserializer.deserialize_str(TVisitor)
     }
 }
 
@@ -769,6 +906,121 @@ impl From<ColorName> for egui::Color32 {
             ColorName::DebugColor     => egui::Color32::DEBUG_COLOR,
             ColorName::TemporaryColor => egui::Color32::TEMPORARY_COLOR,
         }
+    }
+}
+
+//
+// Stroke
+//
+
+#[derive(Debug, Clone)]
+pub struct Stroke(pub egui::Stroke);
+
+impl<'de> Deserialize<'de> for Stroke {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Stroke;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("{ width color } or none")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let width = seq.next_element::<f32>()?.ok_or_else(|| Error::invalid_length(0, &self))?;
+                let color = seq.next_element::<Color>()?.ok_or_else(|| Error::invalid_length(1, &self))?;
+                if seq.next_element::<()>()?.is_some() {
+                    return Err(Error::invalid_length(3, &self));
+                }
+                Ok(Stroke(egui::Stroke::new(width, color.0)))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut width = None;
+                let mut color = None;
+
+                while let Some(str) = map.next_key::<&str>()? {
+                    match str {
+                        "width" => {
+                            if width.is_some() { return Err(Error::duplicate_field("width")); }
+                            width = Some(map.next_value::<f32>()?);
+                        }
+                        "color" => {
+                            if color.is_some() { return Err(Error::duplicate_field("color")); }
+                            color = Some(map.next_value::<Color>()?);
+                        }
+                        _ => { return Err(Error::unknown_field(str, &["width", "color"])); }
+                    }
+                }
+
+                let width = width.ok_or_else(|| Error::missing_field("width"))?;
+                let color = color.ok_or_else(|| Error::missing_field("color"))?;
+                Ok(Stroke(egui::Stroke::new(width, color.0)))
+            }
+
+            fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+                if v == "none" {
+                    Ok(Stroke(egui::Stroke::NONE))
+                } else {
+                    Err(Error::invalid_value(Unexpected::Str(v), &self))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(TVisitor)
+    }
+}
+
+//
+// Rounding
+//
+
+#[derive(Debug, Clone)]
+pub struct Rounding(pub egui::Rounding);
+
+impl<'de> Deserialize<'de> for Rounding {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Rounding;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("none, number, or { top-left top-right bottom-right bottom-left }")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                // same semantics as in CSS
+                let top_left     = seq.next_element::<f32>()?.ok_or_else(|| Error::invalid_length(0, &self))?;
+                let top_right    = seq.next_element::<f32>()?.unwrap_or(top_left);
+                let bottom_right = seq.next_element::<f32>()?.unwrap_or(top_left);
+                let bottom_left  = seq.next_element::<f32>()?.unwrap_or(top_right);
+
+                if seq.next_element::<()>()?.is_some() {
+                    return Err(Error::invalid_length(5, &self));
+                }
+
+                Ok(Rounding(egui::Rounding {
+                    nw: top_left,
+                    ne: top_right,
+                    se: bottom_right,
+                    sw: bottom_left,
+                }))
+            }
+
+            fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+                if v == "none" {
+                    Ok(Rounding(egui::Rounding::ZERO))
+                } else {
+                    let rounding: f32 = v.parse()
+                        .map_err(|_| Error::invalid_value(Unexpected::Str(v), &self))?;
+                    Ok(Rounding(egui::Rounding::same(rounding)))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(TVisitor)
     }
 }
 
