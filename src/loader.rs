@@ -57,7 +57,7 @@ impl<'a, L: Label> EguiWidgetBuilder<'a, L> {
         command.widget = Some(Box::new(widget));
     }
 
-    pub fn on_modify<W: egui::Widget + 'static>(&mut self, name: impl LabelToId<L>, f: impl FnOnce(W) -> W + 'static) {
+    pub fn after_init<W: egui::Widget + 'static>(&mut self, name: impl LabelToId<L>, f: impl FnOnce(W) -> W + 'static) {
         let command = self.commands.entry(name.to_id()).or_default();
         command.map = Some(Box::new(WidgetCommandMapFn { f: Box::new(f) }));
     }
@@ -122,75 +122,93 @@ impl<'a, L: Label> EguiWidgetBuilder<'a, L> {
         window
             .show(ctx, |ui| {
                 for content in &desc.content {
-                    match content {
-                        model::Content::Button(desc) => {
-                            display_widget::<egui::Button>(
-                                ui, desc.name.as_ref(), &mut self.commands,
-                                || egui::Button::new(desc.text.0.clone()),
-                                |mut button| {
-                                    if desc.small { button = button.small(); }
-                                    for prop in desc.props.iter() {
-                                        use model::ButtonProperty as P;
-                                        button = match prop {
-                                            P::ShortcutText(text) => button.shortcut_text(text.0.clone()),
-                                            P::Wrap(wrap)         => button.wrap(*wrap),
-                                            P::Fill(color)        => button.fill(*color),
-                                            P::Stroke(stroke)     => button.stroke(*stroke),
-                                            P::Sense(sense)       => button.sense(sense.0),
-                                            P::Frame(frame)       => button.frame(*frame),
-                                            P::MinSize(size)      => button.min_size(*size),
-                                            P::Rounding(rounding) => button.rounding(*rounding),
-                                            P::Selected(selected) => button.selected(*selected),
-                                        };
-                                    }
-                                    button
-                                },
-                            );
-                        }
-                        model::Content::Label(desc) => {
-                            display_widget::<egui::Label>(
-                                ui, desc.name.as_ref(), &mut self.commands,
-                                || egui::Label::new(desc.text.0.clone()),
-                                |mut label| {
-                                    for prop in desc.props.iter() {
-                                        use model::LabelProperty as P;
-                                        label = match prop {
-                                            P::Wrap(wrap)         => label.wrap(*wrap),
-                                            P::Truncate(truncate) => label.truncate(*truncate),
-                                            P::Sense(sense)       => label.sense(sense.0),
-                                        }
-                                    }
-                                    label
-                                },
-                            );
-                        }
-                        model::Content::Separator(desc) => {
-                            display_widget::<egui::Separator>(
-                                ui, desc.name.as_ref(), &mut self.commands,
-                                egui::Separator::default,
-                                |mut separator| {
-                                    if let Some(is_horizontal_line) = desc.is_horizontal {
-                                        if is_horizontal_line {
-                                            separator = separator.horizontal();
-                                        } else {
-                                            separator = separator.vertical();
-                                        }
-                                    }
-                                    for prop in desc.props.iter() {
-                                        use model::SeparatorProperty as P;
-                                        separator = match prop {
-                                            P::Spacing(spacing) => separator.spacing(*spacing),
-                                            P::Grow(grow)       => separator.grow(*grow),
-                                            P::Shrink(shrink)   => separator.shrink(*shrink),
-                                        }
-                                    }
-                                    separator
-                                },
-                            );
-                        }
-                    }
+                    show_content(ui, content, &mut self.commands);
                 }
             });
+    }
+}
+
+fn show_content(
+    ui: &mut egui::Ui,
+    content: &model::Content,
+    commands: &mut HashMap<egui::Id, WidgetCommand>,
+) {
+    match content {
+        model::Content::Button(desc) => {
+            display_widget::<egui::Button>(
+                ui, desc.name.as_ref(), commands,
+                || egui::Button::new(desc.text.0.clone()),
+                |mut button| {
+                    if desc.small { button = button.small(); }
+                    for prop in desc.props.iter() {
+                        use model::ButtonProperty as P;
+                        button = match prop {
+                            P::ShortcutText(text) => button.shortcut_text(text.0.clone()),
+                            P::Wrap(wrap)         => button.wrap(*wrap),
+                            P::Fill(color)        => button.fill(*color),
+                            P::Stroke(stroke)     => button.stroke(*stroke),
+                            P::Sense(sense)       => button.sense(sense.0),
+                            P::Frame(frame)       => button.frame(*frame),
+                            P::MinSize(size)      => button.min_size(*size),
+                            P::Rounding(rounding) => button.rounding(*rounding),
+                            P::Selected(selected) => button.selected(*selected),
+                        };
+                    }
+                    button
+                },
+            );
+        }
+
+        model::Content::Label(desc) => {
+            display_widget::<egui::Label>(
+                ui, desc.name.as_ref(), commands,
+                || egui::Label::new(desc.text.0.clone()),
+                |mut label| {
+                    for prop in desc.props.iter() {
+                        use model::LabelProperty as P;
+                        label = match prop {
+                            P::Wrap(wrap)         => label.wrap(*wrap),
+                            P::Truncate(truncate) => label.truncate(*truncate),
+                            P::Sense(sense)       => label.sense(sense.0),
+                        }
+                    }
+                    label
+                },
+            );
+        }
+
+        model::Content::Separator(desc) => {
+            display_widget::<egui::Separator>(
+                ui, desc.name.as_ref(), commands,
+                egui::Separator::default,
+                |mut separator| {
+                    if let Some(is_horizontal_line) = desc.is_horizontal {
+                        if is_horizontal_line {
+                            separator = separator.horizontal();
+                        } else {
+                            separator = separator.vertical();
+                        }
+                    }
+                    for prop in desc.props.iter() {
+                        use model::SeparatorProperty as P;
+                        separator = match prop {
+                            P::Spacing(spacing) => separator.spacing(*spacing),
+                            P::Grow(grow)       => separator.grow(*grow),
+                            P::Shrink(shrink)   => separator.shrink(*shrink),
+                        }
+                    }
+                    separator
+                },
+            );
+        }
+
+        model::Content::Layout(desc) => {
+            ui.with_layout(desc.layout, |ui| {
+                for content in &desc.content {
+                    show_content(ui, content, commands);
+                }
+            });
+        }
     }
 }
 

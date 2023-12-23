@@ -25,6 +25,7 @@ impl Root {
                 Content::Button(desc)    => &mut desc.name,
                 Content::Label(desc)     => &mut desc.name,
                 Content::Separator(desc) => &mut desc.name,
+                Content::Layout(_)       => continue,
             };
 
             let Some(name) = &mut name else { continue; };
@@ -213,21 +214,135 @@ impl WindowProperty {
 
 #[derive(Debug, Clone)]
 pub enum Content {
+    // widgets
     Button(Button),
     Label(Label),
     Separator(Separator),
+    // containers
+    Layout(Layout),
 }
 
 impl Content {
-    const FIELDS: &'static [&'static str] = &["button", "label", "separator"];
+    const FIELDS: &'static [&'static str] = &["button", "label", "separator", "layout"];
 
     fn deserialize_map_value<'de, A: MapAccess<'de>>(tag: &str, map: &mut A) -> Result<Self, A::Error> {
         match tag {
             "button"    => Ok(Content::Button    (map.next_value()?)),
             "label"     => Ok(Content::Label     (map.next_value()?)),
             "separator" => Ok(Content::Separator (map.next_value()?)),
+            "layout"    => Ok(Content::Layout    (map.next_value()?)),
             _           => Err(Error::unknown_field(tag, Content::FIELDS)),
         }
+    }
+}
+
+//
+// Layout
+//
+
+#[derive(Debug, Clone)]
+pub struct Layout {
+    pub layout: egui::Layout,
+    pub content: Vec<Content>,
+}
+
+impl Layout {
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["main_dir", "main_wrap", "main_align", "main_justify", "cross_align", "cross_justify"],
+        Content::FIELDS,
+    );
+}
+
+impl<'de> Deserialize<'de> for Layout {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TVisitor;
+
+        impl<'de> Visitor<'de> for TVisitor {
+            type Value = Layout;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("{ main_dir main_wrap .. }")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "snake_case")]
+                enum Direction {
+                    LeftToRight,
+                    RightToLeft,
+                    TopDown,
+                    BottomUp,
+                }
+
+                impl From<Direction> for egui::Direction {
+                    fn from(dir: Direction) -> Self {
+                        match dir {
+                            Direction::LeftToRight => egui::Direction::LeftToRight,
+                            Direction::RightToLeft => egui::Direction::RightToLeft,
+                            Direction::TopDown     => egui::Direction::TopDown,
+                            Direction::BottomUp    => egui::Direction::BottomUp,
+                        }
+                    }
+                }
+
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "snake_case")]
+                enum Align {
+                    Min,
+                    Center,
+                    Max,
+                }
+
+                impl From<Align> for egui::Align {
+                    fn from(align: Align) -> Self {
+                        match align {
+                            Align::Min    => egui::Align::Min,
+                            Align::Center => egui::Align::Center,
+                            Align::Max    => egui::Align::Max,
+                        }
+                    }
+                }
+
+                let mut layout = egui::Layout::default();
+                let mut content = vec![];
+                let mut last_content = None;
+
+                while let Some(str) = map.next_key::<&str>()? {
+                    let mut is_content = false;
+                    match str {
+                        "main_dir"      => { layout.main_dir      = map.next_value::<Direction>()?.into(); }
+                        "main_wrap"     => { layout.main_wrap     = map.next_value()?; }
+                        "main_align"    => { layout.main_align    = map.next_value::<Align>()?.into(); }
+                        "main_justify"  => { layout.main_justify  = map.next_value()?; }
+                        "cross_align"   => { layout.cross_align   = map.next_value::<Align>()?.into(); }
+                        "cross_justify" => { layout.cross_justify = map.next_value()?; }
+                        str => {
+                            if Content::FIELDS.contains(&str) {
+                                content.push(Content::deserialize_map_value(str, &mut map)?);
+                                last_content = Some(str);
+                                is_content = true;
+                            } else {
+                                return Err(Error::unknown_field(str, Layout::FIELDS));
+                            }
+                        }
+                    }
+
+                    if !is_content && last_content.is_some() {
+                        return Err(Error::custom(format!(
+                            "all layout properties should be above content, but `{}` is located after `{}`",
+                            str, last_content.unwrap(),
+                        )));
+                    }
+                }
+
+                Ok(Layout {
+                    layout,
+                    content,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("layout", Self::FIELDS, TVisitor)
     }
 }
 
@@ -440,7 +555,7 @@ impl RichTextProperty {
 //
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum RichTextStyle {
     Small,
     Body,
@@ -776,7 +891,7 @@ impl<'de> Deserialize<'de> for Name {
 //
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 enum Alignment {
     Center,
     Left,
@@ -854,7 +969,7 @@ impl<'de> Deserialize<'de> for Color {
 //
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 enum ColorName {
     Transparent,
     Black,

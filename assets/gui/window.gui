@@ -1,4 +1,6 @@
 window = {
+    #name = "my_label"
+
 	title = {
         text = "Work In Progress"
         color = { 200 255 255 }
@@ -13,15 +15,19 @@ window = {
     min_size = { 100 any }
 
     label = "I'm trying out the idea of having egui configuration loaded as bevy asset."
-    separator = {
-    }
+    separator = {}
     label = {
-        name = "my_label"
         text = "Because fine-tuning UI is such a common task, and the idea of recompiling shit on every change sucks."
         sense = click
     }
-    button = {
-        text = "ok"
-        rounding = 2
+
+    layout = {
+        main_dir = top_down
+        cross_align = center
+
+        button = {
+            text = "ok"
+            rounding = 2
+        }
     }
 }
