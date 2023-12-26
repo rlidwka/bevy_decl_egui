@@ -8,8 +8,9 @@ use loader::{EguiAsset, EguiAssetLoader, EguiAssetLoaderSettings};
 use serde::Deserialize;
 
 mod const_concat;
-mod loader;
-mod model;
+pub mod loader;
+pub mod model;
+pub mod reader;
 
 #[derive(Default)]
 pub struct UiconfPlugin<L> {
@@ -52,7 +53,7 @@ impl AssetServerExt for AssetServer {
 
 pub fn clear_egui_state_on_reload<L: Label>(
     mut events: EventReader<AssetEvent<EguiAsset<L>>>,
-    mut egui_contexts: EguiContexts
+    mut egui_contexts: EguiContexts,
 ) {
     if !events.is_empty() {
         egui_contexts.ctx_mut().memory_mut(|mem| *mem = Default::default());

@@ -5,6 +5,7 @@ use bevy::{input::common_conditions::input_toggle_active, winit::WinitSettings};
 use bevy::prelude::*;
 use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_uiconf_egui::reader::data_model::DataModel;
 use bevy_uiconf_egui::{egui, UiconfPlugin, UiconfWindow, AssetServerExt};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +42,7 @@ fn main() {
         .add_systems(Startup, initialize_uiconf_assets)
         .add_systems(Update, display_custom_window)
         .add_systems(Update, bevy::window::close_on_esc)
+        .add_systems(Update, bevy_uiconf_egui::clear_egui_state_on_reload::<MyWidgets>)
         .run();
 }
 
@@ -55,54 +57,12 @@ fn display_custom_window(
     mut egui_contexts: EguiContexts,
 ) {
     let Some(window) = uiconf_assets.get(&my_window.handle) else { return; };
-    let mut ui = window.prepare();
 
-    //ui.add("my_label", egui::Label::new("Hello, world!"));
+    let mut data = DataModel::new();
+    data.set("text", "qwertyuio".to_string());
+    data.set("color", egui::Color32::RED);
+    data.set("true", true);
+    data.set("false", false);
 
-    //ui.init_with(MyWidgets::MyLabel, egui::Label::new("Hello, world!"));
-    ui.on_modify(MyWidgets::MyLabel, |label: egui::Label| {
-        //label.spacing(10.)
-        label.sense(egui::Sense::click_and_drag())
-    });
-    /*ui.on_response(MyWidgets::MyLabel, |response| {
-        dbg!(response.clicked());
-    });*/
-    ui.show(egui_contexts.ctx_mut());
-
-
-    /*window.show(egui_contexts.ctx_mut());/*, |ui| {
-        ui.label("NAME", "Hello, world!");
-    });*/
-
-
-    let ui = window.prepare();
-
-    ui.add("NAME", Label::new("Hello, world!"));
-    ui.get::<Label>("NAME", |label: Label| {
-        label.sense(egui::Sense::click_and_drag());
-    });
-
-    let resp = ui.show();
-    if resp.get("NAME").clicked() {
-        println!("clicked");
-    }
-
-
-    ui.label("NAME")
-        .text("Hello, world!")
-        .map(|label| { label.sense(egui::Sense::click_and_drag()) })
-        .response(|response| { dbg!(response.clicked()) });
-
-
-    let mut label = egui::Label::new(&label.text);
-    label = label.sense(egui::Sense::click_and_drag());
-    let response = ui.add(label);
-    if response.clicked() {
-        println!("clicked");
-    }
-
-
-
-
-*/
+    window.show(&mut data, egui_contexts.ctx_mut());
 }
