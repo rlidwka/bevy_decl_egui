@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use bevy::winit::UpdateMode;
-use bevy::{input::common_conditions::input_toggle_active, winit::WinitSettings};
+use bevy::input::common_conditions::input_toggle_active;
 use bevy::prelude::*;
+use bevy::winit::{UpdateMode, WinitSettings};
 use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use bevy_uiconf_egui::reader::data_model::DataModel;
-use bevy_uiconf_egui::{egui, UiconfPlugin, UiconfWindow, AssetServerExt};
+use bevy_uiconf_egui::reader::data_model::Trigger;
+use bevy_uiconf_egui::{AssetServerExt, UiconfPlugin, UiconfWindow};
 use serde::{Deserialize, Serialize};
 
 #[derive(Resource, Default)]
@@ -19,7 +19,16 @@ struct MyWindow {
 enum MyWidgets {
     MyLabel,
 }
-//type MyWidgets = String;
+
+#[derive(Resource, Reflect, Default)]
+#[reflect(Resource, Default)]
+struct DataModel {
+    text: String,
+    color: Color,
+    xtrue: bool,
+    xfalse: bool,
+    trigger: Trigger,
+}
 
 fn main() {
     // For hot-reloading of the assets during testing, I want bevy to check
@@ -34,10 +43,18 @@ fn main() {
                 .run_if(input_toggle_active(false, KeyCode::F12)),
             UiconfPlugin::<MyWidgets>::new(),
         ))
+        .register_type::<DataModel>()
         .insert_resource(WinitSettings {
             focused_mode: UpdateMode::Reactive { wait },
             unfocused_mode: UpdateMode::Reactive { wait },
             ..Default::default()
+        })
+        .insert_resource(DataModel {
+            text: "qwertyuio".to_string(),
+            color: Color::RED,
+            xtrue: true,
+            xfalse: false,
+            trigger: Trigger::default(),
         })
         .add_systems(Startup, initialize_uiconf_assets)
         .add_systems(Update, display_custom_window)
@@ -52,17 +69,22 @@ fn initialize_uiconf_assets(mut commands: Commands, asset_server: Res<AssetServe
 }
 
 fn display_custom_window(
+    mut data: ResMut<DataModel>,
     uiconf_assets: Res<Assets<UiconfWindow<MyWidgets>>>,
     my_window: Res<MyWindow>,
     mut egui_contexts: EguiContexts,
 ) {
     let Some(window) = uiconf_assets.get(&my_window.handle) else { return; };
 
-    let mut data = DataModel::new();
+    /*let mut data = DataModel::new();
     data.set("text", "qwertyuio".to_string());
     data.set("color", egui::Color32::RED);
     data.set("true", true);
-    data.set("false", false);
+    data.set("false", false);*/
 
-    window.show(&mut data, egui_contexts.ctx_mut());
+    window.show(data.as_reflect_mut(), egui_contexts.ctx_mut());
+
+    if data.trigger.check_reset() {
+        println!("triggered!");
+    }
 }

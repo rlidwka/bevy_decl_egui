@@ -1,70 +1,39 @@
-use std::any::Any;
-
-use bevy::utils::HashMap;
+use bevy::reflect::prelude::*;
 
 pub trait ResolveBinding {
     type Item;
-    fn resolve<'data>(&'data self, data: &'data DataModel) -> anyhow::Result<&'data Self::Item>;
-    fn resolve_mut<'data>(&'data mut self, data: &'data mut DataModel) -> anyhow::Result<&'data mut Self::Item>;
+
+    fn resolve(
+        &self,
+        data: &dyn Reflect,
+    ) -> anyhow::Result<Self::Item>;
 }
 
-#[derive(Default)]
-pub struct DataModel(HashMap<String, DataItem>);
+pub trait ResolveBindingRef {
+    type Item;
 
-impl DataModel {
-    pub fn new() -> Self {
-        Self(HashMap::default())
+    fn resolve_ref<'data>(
+        &'data self,
+        data: &'data dyn Reflect,
+    ) -> anyhow::Result<&'data Self::Item>;
+}
+
+#[derive(Reflect, Debug, Default)]
+#[reflect(Default)]
+pub struct Trigger(u32);
+
+impl Trigger {
+    pub fn check_reset(&mut self) -> bool {
+        let triggered = self.0 > 0;
+        self.0 = 0;
+        triggered
     }
 
-    pub fn set<T: Any>(&mut self, key: &str, value: T) {
-        self.0.insert(key.to_string(), DataItem::new(value));
-    }
-
-    pub fn get<T: Any>(&self, key: &str) -> anyhow::Result<&T> {
+    pub fn get_count(&self) -> u32 {
         self.0
-            .get(key)
-            .ok_or_else(|| anyhow::anyhow!("key `{}` not found", key))?
-            .get()
     }
 
-    pub fn get_mut<T: Any>(&mut self, key: &str) -> anyhow::Result<&mut T> {
-        self.0
-            .get_mut(key)
-            .ok_or_else(|| anyhow::anyhow!("key `{}` not found", key))?
-            .get_mut()
-    }
-}
-
-struct DataItem {
-    type_name: &'static str,
-    value: Box<dyn Any>,
-}
-
-impl DataItem {
-    fn new<T: Any>(value: T) -> Self {
-        Self {
-            type_name: std::any::type_name::<T>(),
-            value: Box::new(value),
-        }
-    }
-
-    fn get<T: Any>(&self) -> anyhow::Result<&T> {
-        self.value.downcast_ref::<T>().ok_or_else(|| {
-            anyhow::anyhow!(
-                "expected type {}, found {}",
-                std::any::type_name::<T>(),
-                self.type_name
-            )
-        })
-    }
-
-    fn get_mut<T: Any>(&mut self) -> anyhow::Result<&mut T> {
-        self.value.downcast_mut::<T>().ok_or_else(|| {
-            anyhow::anyhow!(
-                "expected type {}, found {}",
-                std::any::type_name::<T>(),
-                self.type_name
-            )
-        })
+    pub fn trigger(&mut self) {
+        self.0 += 1;
     }
 }

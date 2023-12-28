@@ -1,7 +1,6 @@
 use bevy::asset::{AssetLoader, AsyncReadExt};
 use bevy::prelude::*;
 
-use crate::reader::data_model::DataModel;
 use crate::{egui, Label};
 
 #[derive(Asset, TypePath, Debug)]
@@ -12,7 +11,7 @@ pub struct EguiAsset<L: Label>{
 }
 
 impl<L: Label> EguiAsset<L> {
-    pub fn show(&self, data: &mut DataModel, ctx: &mut egui::Context) {
+    pub fn show(&self, data: &mut dyn Reflect, ctx: &mut egui::Context) {
         self.window.show(data, ctx);
     }
 }

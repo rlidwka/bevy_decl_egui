@@ -19,6 +19,7 @@ window = {
     label = {
         text = "Because fine-tuning UI is such a common task, and the idea of recompiling shit on every change sucks."
         sense = click
+        clicked = @trigger
     }
 
     layout = {

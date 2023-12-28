@@ -5,6 +5,7 @@ use bevy::asset::AssetPath;
 use bevy::prelude::*;
 use bevy_inspector_egui::bevy_egui::EguiContexts;
 use loader::{EguiAsset, EguiAssetLoader, EguiAssetLoaderSettings};
+use reader::data_model::Trigger;
 use serde::Deserialize;
 
 mod const_concat;
@@ -27,6 +28,7 @@ impl<L: Label> Plugin for UiconfPlugin<L> {
     fn build(&self, app: &mut App) {
         app.init_asset::<EguiAsset<L>>();
         app.init_asset_loader::<EguiAssetLoader<L>>();
+        app.register_type::<Trigger>();
     }
 }
 

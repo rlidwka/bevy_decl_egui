@@ -1,11 +1,13 @@
 use std::fmt::Debug;
 use std::str::FromStr;
+use std::vec;
 
+use bevy::reflect::Reflect;
 use jomini::{TextTape, TextToken};
-use strum::{EnumString, EnumVariantNames, VariantNames, Display};
+use strum::{Display, EnumString, EnumVariantNames, VariantNames};
 
 use crate::reader::binding::{Binding, BindingRef};
-use crate::reader::data_model::{DataModel, ResolveBinding};
+use crate::reader::data_model::{ResolveBinding, ResolveBindingRef, Trigger};
 use crate::reader::error::Error;
 use crate::reader::reader::Reader;
 use crate::reader::ReadUiconf;
@@ -64,17 +66,17 @@ impl Root {
 pub struct Window {
     pub title: RichText,
     pub props: Vec<WindowProperty>,
-    pub content: Vec<Content>,
+    pub content: Content,
 }
 
 impl Window {
     const FIELDS: &'static [&'static str] = const_concat!(
         &["title"],
         WindowProperty::FIELDS,
-        Content::FIELDS,
+        ContentWidget::FIELDS,
     );
 
-    pub fn show(&self, data: &mut DataModel, ctx: &egui::Context) {
+    pub fn show(&self, data: &mut dyn Reflect, ctx: &egui::Context) {
         let title = self.title.resolve(data).ok().unwrap_or_default();
         let mut window = egui::Window::new(title);
 
@@ -86,7 +88,7 @@ impl Window {
                 }
                 P::TitleBar(title_bar) => {
                     if let Ok(title_bar) = title_bar.resolve(data) {
-                        window = window.title_bar(*title_bar);
+                        window = window.title_bar(title_bar);
                     }
                 }
 
@@ -110,38 +112,36 @@ impl Window {
                 }
                 P::Resizable(resizable) => {
                     if let Ok(resizable) = resizable.resolve(data) {
-                        window = window.resizable(*resizable);
+                        window = window.resizable(resizable);
                     }
                 }
 
                 // other flags
                 P::Enabled(enabled) => {
                     if let Ok(enabled) = enabled.resolve(data) {
-                        window = window.enabled(*enabled);
+                        window = window.enabled(enabled);
                     }
                 }
                 P::Interactable(interactable) => {
                     if let Ok(interactable) = interactable.resolve(data) {
-                        window = window.interactable(*interactable);
+                        window = window.interactable(interactable);
                     }
                 }
                 P::Movable(movable) => {
                     if let Ok(movable) = movable.resolve(data) {
-                        window = window.movable(*movable);
+                        window = window.movable(movable);
                     }
                 }
                 P::Collapsible(collapsible) => {
                     if let Ok(collapsible) = collapsible.resolve(data) {
-                        window = window.collapsible(*collapsible);
+                        window = window.collapsible(collapsible);
                     }
                 }
             }
         }
 
         window.show(ctx, |ui| {
-            for content in self.content.iter() {
-                content.show(data, ui);
-            }
+            self.content.show(data, ui);
         });
     }
 }
@@ -163,8 +163,8 @@ impl ReadUiconf for Window {
             } else if WindowProperty::FIELDS.contains(&&*key) {
                 props.push(WindowProperty::read_map_value(&key, &value)?);
                 should_be_on_top = true;
-            } else if Content::FIELDS.contains(&&*key) {
-                content.push(Content::read_map_value(&key, &value)?);
+            } else if ContentWidget::FIELDS.contains(&&*key) {
+                content.push(ContentWidget::read_map_value(&key, &value)?);
                 last_content = Some(key.to_string());
             } else {
                 return Err(Error::unknown_field(&value, &key, Window::FIELDS));
@@ -183,7 +183,7 @@ impl ReadUiconf for Window {
         Ok(Window {
             title,
             props,
-            content,
+            content: Content(content),
         })
     }
 }
@@ -243,7 +243,34 @@ impl WindowProperty {
 //
 
 #[derive(Debug)]
-pub enum Content {
+pub struct Content(Vec<ContentWidget>);
+
+impl Content {
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        for widget in self.0.iter() {
+            widget.show(data, ui);
+        }
+    }
+}
+
+impl ReadUiconf for Content {
+    fn read_uiconf(value: &Reader) -> Result<Self, Error> {
+        if value.is_scalar() {
+            return Ok(Self(vec![ContentWidget::Label(Label::new(value.read()?))]));
+        }
+
+        let mut widgets = vec![];
+
+        for (key, value) in value.read_object()? {
+            widgets.push(ContentWidget::read_map_value(&key, &value)?);
+        }
+
+        Ok(Content(widgets))
+    }
+}
+
+#[derive(Debug)]
+pub enum ContentWidget {
     // widgets
     Button(Button),
     Label(Label),
@@ -252,7 +279,7 @@ pub enum Content {
     Layout(Layout),
 }
 
-impl Content {
+impl ContentWidget {
     const FIELDS: &'static [&'static str] = &["button", "label", "separator", "layout"];
 
     fn read_map_value(tag: &str, value: &Reader) -> Result<Self, Error> {
@@ -265,7 +292,7 @@ impl Content {
         }
     }
 
-    fn show(&self, data: &mut DataModel, ui: &mut egui::Ui) {
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
         match self {
             Self::Button(button)       => button.show(data, ui),
             Self::Label(label)         => label.show(data, ui),
@@ -282,22 +309,25 @@ impl Content {
 #[derive(Debug)]
 pub struct Layout {
     pub layout: egui::Layout,
-    pub content: Vec<Content>,
+    pub visible: Option<Binding<bool>>,
+    pub content: Content,
 }
 
 impl Layout {
     const FIELDS: &'static [&'static str] = const_concat!(
-        &["main_dir", "main_wrap", "main_align", "main_justify", "cross_align", "cross_justify"],
-        Content::FIELDS,
+        &["main_dir", "main_wrap", "main_align", "main_justify", "cross_align", "cross_justify", "visible"],
+        ContentWidget::FIELDS,
     );
 
-    fn show(&self, data: &mut DataModel, ui: &mut egui::Ui) {
-        let mut layout = self.layout.clone();
-
-        ui.with_layout(layout, |ui| {
-            for content in self.content.iter() {
-                content.show(data, ui);
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        if let Some(visible) = &self.visible {
+            if let Ok(visible) = visible.resolve(data) {
+                if !visible { return; }
             }
+        }
+
+        ui.with_layout(self.layout, |ui| {
+            self.content.show(data, ui);
         });
     }
 }
@@ -361,6 +391,7 @@ impl ReadUiconf for Layout {
         }
 
         let mut layout = egui::Layout::default();
+        let mut visible = None;
         let mut content = vec![];
         let mut last_content = None;
 
@@ -373,9 +404,10 @@ impl ReadUiconf for Layout {
                 "main_justify"  => { layout.main_justify  = value.read()?; }
                 "cross_align"   => { layout.cross_align   = value.read::<Align>()?.into(); }
                 "cross_justify" => { layout.cross_justify = value.read()?; }
+                "visible"       => { visible              = Some(value.read()?); }
                 str => {
-                    if Content::FIELDS.contains(&str) {
-                        content.push(Content::read_map_value(str, &value)?);
+                    if ContentWidget::FIELDS.contains(&str) {
+                        content.push(ContentWidget::read_map_value(str, &value)?);
                         last_content = Some(str.to_owned());
                         is_content = true;
                     } else {
@@ -394,8 +426,134 @@ impl ReadUiconf for Layout {
 
         Ok(Layout {
             layout,
-            content,
+            visible,
+            content: Content(content),
         })
+    }
+}
+
+//
+// Response
+//
+
+#[derive(Debug)]
+pub struct Response(Vec<ResponseProperty>);
+
+impl Response {
+    fn process(&self, data: &mut dyn Reflect, mut response: egui::Response) {
+        for prop in self.0.iter() {
+            use ResponseProperty as P;
+            match prop {
+                P::Clicked(trigger) => {
+                    if let Ok(clicked) = trigger.resolve_mut(data) {
+                        if response.clicked() { clicked.trigger(); }
+                    }
+                }
+                P::SecondaryClicked(trigger) => {
+                    if let Ok(clicked) = trigger.resolve_mut(data) {
+                        if response.secondary_clicked() { clicked.trigger(); }
+                    }
+                }
+                P::MiddleClicked(trigger) => {
+                    if let Ok(clicked) = trigger.resolve_mut(data) {
+                        if response.middle_clicked() { clicked.trigger(); }
+                    }
+                }
+                P::DoubleClicked(trigger) => {
+                    if let Ok(clicked) = trigger.resolve_mut(data) {
+                        if response.double_clicked() { clicked.trigger(); }
+                    }
+                }
+                P::TripleClicked(trigger) => {
+                    if let Ok(clicked) = trigger.resolve_mut(data) {
+                        if response.triple_clicked() { clicked.trigger(); }
+                    }
+                }
+                P::ClickedElsewhere(trigger) => {
+                    if let Ok(clicked) = trigger.resolve_mut(data) {
+                        if response.clicked_elsewhere() { clicked.trigger(); }
+                    }
+                }
+                P::Hovered(trigger) => {
+                    if let Ok(hovered) = trigger.resolve_mut(data) {
+                        if response.hovered() { hovered.trigger(); }
+                    }
+                }
+                P::Highlighted(trigger) => {
+                    if let Ok(highlighted) = trigger.resolve_mut(data) {
+                        if response.highlighted() { highlighted.trigger(); }
+                    }
+                }
+                P::Changed(trigger) => {
+                    if let Ok(changed) = trigger.resolve_mut(data) {
+                        if response.changed() { changed.trigger(); }
+                    }
+                }
+                P::OnHover(content) => {
+                    response = response.on_hover_ui(|ui| {
+                        content.show(data, ui);
+                    });
+                }
+                P::OnDisabledHover(content) => {
+                    response = response.on_disabled_hover_ui(|ui| {
+                        content.show(data, ui);
+                    });
+                }
+                P::OnHoverAtPointer(content) => {
+                    response = response.on_hover_ui_at_pointer(|ui| {
+                        content.show(data, ui);
+                    });
+                }
+                P::Highlight(highlight) => {
+                    if let Ok(highlight) = highlight.resolve(data) {
+                        if highlight { response = response.highlight(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ResponseProperty {
+    Clicked(BindingRef<Trigger>),
+    SecondaryClicked(BindingRef<Trigger>),
+    MiddleClicked(BindingRef<Trigger>),
+    DoubleClicked(BindingRef<Trigger>),
+    TripleClicked(BindingRef<Trigger>),
+    ClickedElsewhere(BindingRef<Trigger>),
+    Hovered(BindingRef<Trigger>),
+    Highlighted(BindingRef<Trigger>),
+    Changed(BindingRef<Trigger>),
+    OnHover(Content),
+    OnDisabledHover(Content),
+    OnHoverAtPointer(Content),
+    Highlight(Binding<bool>),
+}
+
+impl ResponseProperty {
+    const FIELDS: &'static [&'static str] = &[
+        "clicked", "secondary_clicked", "middle_clicked", "double_clicked", "triple_clicked", "clicked_elsewhere",
+        "hovered", "highlighted", "changed", "on_hover", "on_disabled_hover", "on_hover_at_pointer", "highlight",
+    ];
+
+    fn read_map_value(tag: &str, value: &Reader) -> Result<Self, Error> {
+        match tag {
+            "clicked"            => Ok(Self::Clicked            (value.read()?)),
+            "secondary_clicked"  => Ok(Self::SecondaryClicked   (value.read()?)),
+            "middle_clicked"     => Ok(Self::MiddleClicked      (value.read()?)),
+            "double_clicked"     => Ok(Self::DoubleClicked      (value.read()?)),
+            "triple_clicked"     => Ok(Self::TripleClicked      (value.read()?)),
+            "clicked_elsewhere"  => Ok(Self::ClickedElsewhere   (value.read()?)),
+            "hovered"            => Ok(Self::Hovered            (value.read()?)),
+            "highlighted"        => Ok(Self::Highlighted        (value.read()?)),
+            "changed"            => Ok(Self::Changed            (value.read()?)),
+            "on_hover"           => Ok(Self::OnHover            (value.read()?)),
+            "on_disabled_hover"  => Ok(Self::OnDisabledHover    (value.read()?)),
+            "on_hover_at_pointer"=> Ok(Self::OnHoverAtPointer   (value.read()?)),
+            "highlight"          => Ok(Self::Highlight          (value.read()?)),
+            _                    => Err(Error::unknown_field(value, tag, Self::FIELDS)),
+        }
     }
 }
 
@@ -403,7 +561,7 @@ impl ReadUiconf for Layout {
 // Anchor
 //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Anchor {
     pub align: egui::Align2,
     pub offset: egui::Vec2,
@@ -476,8 +634,16 @@ impl RichText {
         RichTextProperty::FIELDS,
     );
 
-    fn resolve(&self, data: &DataModel) -> anyhow::Result<egui::RichText> {
-        let text = self.text.resolve(data).cloned().unwrap_or_default();
+    pub fn new(text: Binding<String>) -> Self {
+        Self { text, props: vec![] }
+    }
+}
+
+impl ResolveBinding for RichText {
+    type Item = egui::RichText;
+
+    fn resolve(&self, data: &dyn Reflect) -> anyhow::Result<Self::Item> {
+        let text = self.text.resolve_ref(data).cloned().unwrap_or_default();
         let mut result = egui::RichText::new(text);
 
         for prop in self.props.iter() {
@@ -485,7 +651,7 @@ impl RichText {
             match prop {
                 P::Size(size) => {
                     if let Ok(size) = size.resolve(data) {
-                        result = result.size(*size);
+                        result = result.size(size);
                     }
                 }
                 P::Style(styles) => {
@@ -508,22 +674,22 @@ impl RichText {
                 }
                 P::Color(color) => {
                     if let Ok(color) = color.resolve(data) {
-                        result = result.color(*color);
+                        result = result.color(color_bevy_to_egui(color));
                     }
                 }
                 P::BackgroundColor(color) => {
                     if let Ok(color) = color.resolve(data) {
-                        result = result.background_color(*color);
+                        result = result.background_color(color_bevy_to_egui(color));
                     }
                 }
                 P::LineHeight(line_height) => {
                     if let Ok(line_height) = line_height.resolve(data) {
-                        result = result.line_height(Some(*line_height));
+                        result = result.line_height(Some(line_height));
                     }
                 }
                 P::ExtraLetterSpacing(spacing) => {
                     if let Ok(spacing) = spacing.resolve(data) {
-                        result = result.extra_letter_spacing(*spacing);
+                        result = result.extra_letter_spacing(spacing);
                     }
                 }
             }
@@ -536,10 +702,7 @@ impl RichText {
 impl ReadUiconf for RichText {
     fn read_uiconf(value: &Reader) -> Result<Self, Error> {
         if value.is_scalar() {
-            return Ok(Self {
-                text: value.read()?,
-                props: vec![],
-            });
+            return Ok(Self::new(value.read()?));
         }
 
         let mut text = None;
@@ -569,8 +732,8 @@ impl ReadUiconf for RichText {
 pub enum RichTextProperty {
     Size(Binding<f32>),
     Style(Vec<RichTextStyle>),
-    Color(Binding<egui::Color32>),
-    BackgroundColor(Binding<egui::Color32>),
+    Color(Binding<bevy::prelude::Color>),
+    BackgroundColor(Binding<bevy::prelude::Color>),
     LineHeight(Binding<f32>),
     ExtraLetterSpacing(Binding<f32>),
 }
@@ -586,8 +749,8 @@ impl RichTextProperty {
             "extra_letter_spacing" => Ok(Self::ExtraLetterSpacing (value.read()?)),
             "line_height"          => Ok(Self::LineHeight         (value.read()?)),
             "style"                => Ok(Self::Style              (value.read()?)),
-            "background_color"     => Ok(Self::BackgroundColor    (value.read::<Color>()?.0)),
-            "color"                => Ok(Self::Color              (value.read::<Color>()?.0)),
+            "background_color"     => Ok(Self::BackgroundColor    (value.read::<Binding<Color>>()?.map_value(|c| c.0))),
+            "color"                => Ok(Self::Color              (value.read::<Binding<Color>>()?.map_value(|c| c.0))),
             _ => Err(Error::unknown_field(value, tag, Self::FIELDS)),
         }
     }
@@ -631,16 +794,35 @@ impl ReadUiconf for RichTextStyle {
 pub struct Button {
     pub text: RichText,
     pub small: bool,
+    pub visible: Option<Binding<bool>>,
     pub props: Vec<ButtonProperty>,
+    pub response: Response,
 }
 
 impl Button {
     const FIELDS: &'static [&'static str] = const_concat!(
-        &["text", "small"],
+        &["text", "small", "visible"],
         ButtonProperty::FIELDS,
+        ResponseProperty::FIELDS,
     );
 
-    fn show(&self, data: &mut DataModel, ui: &mut egui::Ui) {
+    pub fn new(text: RichText) -> Self {
+        Self {
+            text,
+            small: false,
+            visible: None,
+            props: vec![],
+            response: Response(vec![]),
+        }
+    }
+
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        if let Some(visible) = &self.visible {
+            if let Ok(visible) = visible.resolve(data) {
+                if !visible { return; }
+            }
+        }
+
         let text = self.text.resolve(data).ok().unwrap_or_default();
         let mut button = egui::Button::new(text);
 
@@ -661,7 +843,7 @@ impl Button {
                 P::Wrap(wrap) => button.wrap(*wrap),
                 P::Fill(color) => {
                     if let Ok(color) = color.resolve(data) {
-                        button.fill(color)
+                        button.fill(color_bevy_to_egui(color))
                     } else {
                         button
                     }
@@ -681,40 +863,50 @@ impl Button {
             };
         }
 
-        ui.add(button);
+        self.response.process(data, ui.add(button));
     }
 }
 
 impl ReadUiconf for Button {
     fn read_uiconf(value: &Reader) -> Result<Self, Error> {
         if value.is_scalar() {
-            return Ok(Self {
-                text: value.read()?,
-                small: false,
-                props: vec![],
-            });
+            return Ok(Self::new(value.read()?));
         }
 
         let mut text = None;
+        let mut visible = None;
         let mut small = false;
         let mut props = vec![];
+        let mut response = vec![];
 
         for (key, value) in value.read_object()? {
-            if key == "text" {
-                if text.is_some() { return Err(Error::duplicate_field(&value, "text")); }
-                text = Some(value.read()?);
-            } else if key == "small" {
-                small = value.read()?;
-            } else if ButtonProperty::FIELDS.contains(&&*key) {
-                props.push(ButtonProperty::read_map_value(&key, &value)?);
-            } else {
-                return Err(Error::unknown_field(&value, &key, Button::FIELDS));
+            match &*key {
+                "text" => {
+                    if text.is_some() { return Err(Error::duplicate_field(&value, "text")); }
+                    text = Some(value.read()?);
+                }
+                "visible" => {
+                    if visible.is_some() { return Err(Error::duplicate_field(&value, "visible")); }
+                    visible = Some(value.read()?);
+                }
+                "small" => {
+                    small = value.read()?;
+                }
+                str => {
+                    if ButtonProperty::FIELDS.contains(&str) {
+                        props.push(ButtonProperty::read_map_value(&key, &value)?);
+                    } else if ResponseProperty::FIELDS.contains(&str) {
+                        response.push(ResponseProperty::read_map_value(&key, &value)?);
+                    } else {
+                        return Err(Error::unknown_field(&value, &key, Button::FIELDS));
+                    }
+                }
             }
         }
 
         let text = text.ok_or_else(|| Error::missing_field(value, "text"))?;
 
-        Ok(Button { text, small, props })
+        Ok(Button { text, visible, small, props, response: Response(response) })
     }
 }
 
@@ -726,7 +918,7 @@ impl ReadUiconf for Button {
 pub enum ButtonProperty {
     ShortcutText(RichText),
     Wrap(bool),
-    Fill(Color),
+    Fill(Binding<bevy::prelude::Color>),
     Stroke(Stroke),
     Sense(Sense),
     Frame(bool),
@@ -744,7 +936,7 @@ impl ButtonProperty {
         match tag {
             "shortcut_text" => Ok(Self::ShortcutText (value.read()?)),
             "wrap"          => Ok(Self::Wrap         (value.read()?)),
-            "fill"          => Ok(Self::Fill         (value.read()?)),
+            "fill"          => Ok(Self::Fill         (value.read::<Binding<Color>>()?.map_value(|c| c.0))),
             "stroke"        => Ok(Self::Stroke       (value.read()?)),
             "sense"         => Ok(Self::Sense        (value.read()?)),
             "frame"         => Ok(Self::Frame        (value.read()?)),
@@ -763,16 +955,34 @@ impl ButtonProperty {
 #[derive(Debug)]
 pub struct Label {
     pub text: RichText,
+    pub visible: Option<Binding<bool>>,
     pub props: Vec<LabelProperty>,
+    pub response: Response,
 }
 
 impl Label {
     const FIELDS: &'static [&'static str] = const_concat!(
-        &["text"],
+        &["text", "visible"],
         LabelProperty::FIELDS,
+        ResponseProperty::FIELDS,
     );
 
-    fn show(&self, data: &mut DataModel, ui: &mut egui::Ui) {
+    pub fn new(text: RichText) -> Self {
+        Self {
+            text,
+            visible: None,
+            props: vec![],
+            response: Response(vec![]),
+        }
+    }
+
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        if let Some(visible) = &self.visible {
+            if let Ok(visible) = visible.resolve(data) {
+                if !visible { return; }
+            }
+        }
+
         let text = self.text.resolve(data).ok().unwrap_or_default();
         let mut label = egui::Label::new(text);
 
@@ -785,28 +995,32 @@ impl Label {
             };
         }
 
-        ui.add(label);
+        self.response.process(data, ui.add(label));
     }
 }
 
 impl ReadUiconf for Label {
     fn read_uiconf(value: &Reader) -> Result<Self, Error> {
         if value.is_scalar() {
-            return Ok(Self {
-                text: value.read()?,
-                props: vec![],
-            });
+            return Ok(Self::new(value.read()?));
         }
 
         let mut text = None;
+        let mut visible = None;
         let mut props = vec![];
+        let mut response = vec![];
 
         for (key, value) in value.read_object()? {
             if key == "text" {
                 if text.is_some() { return Err(Error::duplicate_field(&value, "text")); }
                 text = Some(value.read()?);
+            } else if key == "visible" {
+                if visible.is_some() { return Err(Error::duplicate_field(&value, "visible")); }
+                visible = Some(value.read()?);
             } else if LabelProperty::FIELDS.contains(&&*key) {
                 props.push(LabelProperty::read_map_value(&key, &value)?);
+            } else if ResponseProperty::FIELDS.contains(&&*key) {
+                response.push(ResponseProperty::read_map_value(&key, &value)?);
             } else {
                 return Err(Error::unknown_field(&value, &key, Label::FIELDS));
             }
@@ -814,7 +1028,7 @@ impl ReadUiconf for Label {
 
         let text = text.ok_or_else(|| Error::missing_field(value, "text"))?;
 
-        Ok(Label { text, props })
+        Ok(Label { text, visible, props, response: Response(response) })
     }
 }
 
@@ -846,13 +1060,27 @@ impl LabelProperty {
 // Separator
 //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Separator {
+    pub visible: Option<Binding<bool>>,
     pub props: Vec<SeparatorProperty>,
+    pub response: Response,
 }
 
 impl Separator {
-    fn show(&self, _data: &mut DataModel, ui: &mut egui::Ui) {
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["visible"],
+        SeparatorProperty::FIELDS,
+        ResponseProperty::FIELDS,
+    );
+
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        if let Some(visible) = &self.visible {
+            if let Ok(visible) = visible.resolve(data) {
+                if !visible { return; }
+            }
+        }
+
         let mut separator = egui::Separator::default();
 
         for prop in self.props.iter() {
@@ -869,19 +1097,30 @@ impl Separator {
             };
         }
 
-        ui.add(separator);
+        self.response.process(data, ui.add(separator));
     }
 }
 
 impl ReadUiconf for Separator {
     fn read_uiconf(value: &Reader) -> Result<Self, Error> {
+        let mut visible = None;
         let mut props = vec![];
+        let mut response = vec![];
 
         for (key, value) in value.read_object()? {
-            props.push(SeparatorProperty::read_map_value(&key, &value)?);
+            if key == "visible" {
+                if visible.is_some() { return Err(Error::duplicate_field(&value, "visible")); }
+                visible = Some(value.read()?);
+            } else if SeparatorProperty::FIELDS.contains(&&*key) {
+                props.push(SeparatorProperty::read_map_value(&key, &value)?);
+            } else if ResponseProperty::FIELDS.contains(&&*key) {
+                response.push(ResponseProperty::read_map_value(&key, &value)?);
+            } else {
+                return Err(Error::unknown_field(&value, &key, Separator::FIELDS));
+            }
         }
 
-        Ok(Separator { props })
+        Ok(Separator { visible, props, response: Response(response) })
     }
 }
 
@@ -948,24 +1187,14 @@ impl ReadUiconf for Alignment {
 // Color
 //
 
-#[derive(Debug)]
-pub struct Color(Binding<egui::Color32>);
-
-impl Color {
-    fn resolve(&self, data: &DataModel) -> anyhow::Result<egui::Color32> {
-        self.0.resolve(data).copied()
-    }
-}
+#[derive(Debug, Clone, Copy)]
+pub struct Color(bevy::prelude::Color);
 
 impl ReadUiconf for Color {
     fn read_uiconf(value: &Reader) -> Result<Self, Error> {
         if value.is_scalar() {
-            if let Ok(binding) = value.read::<BindingRef>() {
-                return Ok(Self(Binding::Ref(binding)));
-            } else {
-                let value: ColorName = value.read()?;
-                return Ok(Self(Binding::Value(value.into())));
-            }
+            let value: ColorName = value.read()?;
+            return Ok(value.into());
         }
 
         const EXPECTED: &str = "{ r g b a? }";
@@ -981,7 +1210,8 @@ impl ReadUiconf for Color {
         if seq.next().is_some() {
             return Err(Error::invalid_length(value, 5, EXPECTED));
         }
-        Ok(Self(Binding::Value(egui::Color32::from_rgba_premultiplied(r, g, b, a))))
+        Ok(Self(bevy::prelude::Color::rgba_u8(r, g, b, a)))
+        //Ok(Self(egui::Color32::from_rgba_premultiplied(r, g, b, a)))
     }
 }
 
@@ -1054,6 +1284,13 @@ impl From<ColorName> for egui::Color32 {
     }
 }
 
+impl From<ColorName> for Color {
+    fn from(name: ColorName) -> Color {
+        let color: egui::Color32 = name.into();
+        Color(color_egui_to_bevy(color))
+    }
+}
+
 //
 // Stroke
 //
@@ -1061,14 +1298,16 @@ impl From<ColorName> for egui::Color32 {
 #[derive(Debug)]
 pub struct Stroke {
     pub width: Binding<f32>,
-    pub color: Color,
+    pub color: Binding<bevy::prelude::Color>,
 }
 
-impl Stroke {
-    pub fn resolve(&self, data: &DataModel) -> anyhow::Result<egui::Stroke> {
-        let width = self.width.resolve(data).copied().unwrap_or_default();
+impl ResolveBinding for Stroke {
+    type Item = egui::Stroke;
+
+    fn resolve(&self, data: &dyn Reflect) -> anyhow::Result<Self::Item> {
+        let width = self.width.resolve(data).unwrap_or_default();
         let color = self.color.resolve(data).unwrap_or_default();
-        Ok(egui::Stroke::new(width, color))
+        Ok(egui::Stroke::new(width, color_bevy_to_egui(color)))
     }
 }
 
@@ -1079,13 +1318,13 @@ impl ReadUiconf for Stroke {
         if let Ok(str) = value.read_string() {
             if str == "none" {
                 let stroke = egui::Stroke::NONE;
-                return Ok(Self { width: Binding::Value(stroke.width), color: Color(Binding::Value(stroke.color)) });
+                return Ok(Self { width: Binding::Value(stroke.width), color: Binding::Value(color_egui_to_bevy(stroke.color)) });
             }
         }
 
         let mut seq = value.read_array()?;
         let width = seq.next().ok_or_else(|| Error::invalid_length(value, 0, EXPECTED))?.read()?;
-        let color = seq.next().ok_or_else(|| Error::invalid_length(value, 1, EXPECTED))?.read()?;
+        let color = seq.next().ok_or_else(|| Error::invalid_length(value, 1, EXPECTED))?.read::<Binding<Color>>()?.map_value(|x| x.0);
         if seq.next().is_some() {
             return Err(Error::invalid_length(value, 3, EXPECTED));
         }
@@ -1264,4 +1503,20 @@ impl ReadUiconf for Empty {
             _ => Err(Error::invalid_type(value, value.token_type(), "{}")),
         }
     }
+}
+
+//
+// Conversions
+//
+
+fn color_egui_to_bevy(color: egui::Color32) -> bevy::prelude::Color {
+    bevy::prelude::Color::rgba_u8(color.r(), color.g(), color.b(), color.a())
+}
+
+fn color_bevy_to_egui(color: bevy::prelude::Color) -> egui::Color32 {
+    let r = (color.r() * 255.) as u8;
+    let g = (color.g() * 255.) as u8;
+    let b = (color.b() * 255.) as u8;
+    let a = (color.a() * 255.) as u8;
+    egui::Color32::from_rgba_premultiplied(r, g, b, a)
 }
