@@ -32,7 +32,7 @@ impl Root {
         let mut window = None;
 
         for (key, op, value) in reader.fields() {
-            let value = Reader::new(value, vec![key.read_str().into()]);
+            let value = Reader::new(value, vec![(key.read_str().into(), 0)]);
             let key = key.read_str();
             if key == "window" {
                 if let Some(op) = op {
@@ -277,10 +277,13 @@ pub enum ContentWidget {
     Separator(Separator),
     // containers
     Layout(Layout),
+    Grid(Grid),
+    // other
+    EndRow(Empty),
 }
 
 impl ContentWidget {
-    const FIELDS: &'static [&'static str] = &["button", "label", "separator", "layout"];
+    const FIELDS: &'static [&'static str] = &["button", "label", "separator", "layout", "grid", "end_row"];
 
     fn read_map_value(tag: &str, value: &Reader) -> Result<Self, Error> {
         match tag {
@@ -288,6 +291,8 @@ impl ContentWidget {
             "label"     => Ok(Self::Label     (value.read()?)),
             "separator" => Ok(Self::Separator (value.read()?)),
             "layout"    => Ok(Self::Layout    (value.read()?)),
+            "grid"      => Ok(Self::Grid      (value.read()?)),
+            "end_row"   => { value.read::<Empty>()?; Ok(Self::EndRow(Empty)) },
             _           => Err(Error::unknown_field(value, tag, Self::FIELDS)),
         }
     }
@@ -298,6 +303,8 @@ impl ContentWidget {
             Self::Label(label)         => label.show(data, ui),
             Self::Separator(separator) => separator.show(data, ui),
             Self::Layout(layout)       => layout.show(data, ui),
+            Self::Grid(grid)           => grid.show(data, ui),
+            Self::EndRow(_)            => ui.end_row(),
         }
     }
 }
@@ -426,6 +433,94 @@ impl ReadUiconf for Layout {
 
         Ok(Layout {
             layout,
+            visible,
+            content: Content(content),
+        })
+    }
+}
+
+//
+// Grid
+//
+
+#[derive(Debug)]
+pub struct Grid {
+    id: egui::Id,
+    pub num_columns: Option<u32>,
+    pub striped: bool,
+    pub spacing: Option<egui::Vec2>,
+    pub visible: Option<Binding<bool>>,
+    pub content: Content,
+}
+
+impl Grid {
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["num_columns", "striped", "spacing", "visible"],
+        ContentWidget::FIELDS,
+    );
+
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        if let Some(visible) = &self.visible {
+            if let Ok(visible) = visible.resolve(data) {
+                if !visible { return; }
+            }
+        }
+
+        let mut grid = egui::Grid::new(self.id);
+        if let Some(num_columns) = self.num_columns {
+            grid = grid.num_columns(num_columns as usize);
+        }
+        grid = grid.striped(self.striped);
+        if let Some(spacing) = self.spacing {
+            grid = grid.spacing(spacing);
+        }
+
+        grid.show(ui, |ui| {
+            self.content.show(data, ui);
+        });
+    }
+}
+
+impl ReadUiconf for Grid {
+    fn read_uiconf(value: &Reader) -> Result<Self, Error> {
+        let mut num_columns = None;
+        let mut striped = false;
+        let mut spacing = None;
+        let mut visible = None;
+        let mut content = vec![];
+        let mut last_content = None;
+
+        for (key, value) in value.read_object()? {
+            let mut is_content = false;
+            match &*key {
+                "num_columns" => { num_columns = Some(value.read()?); }
+                "striped"     => { striped     = value.read()?; }
+                "spacing"     => { spacing     = Some(value.read::<Size::<{ SIZE_ANY_DISALLOWED }>>()?.0); }
+                "visible"     => { visible     = Some(value.read()?); }
+                str => {
+                    if ContentWidget::FIELDS.contains(&str) {
+                        content.push(ContentWidget::read_map_value(str, &value)?);
+                        last_content = Some(str.to_owned());
+                        is_content = true;
+                    } else {
+                        return Err(Error::unknown_field(&value, str, Grid::FIELDS));
+                    }
+                }
+            }
+
+            if !is_content && last_content.is_some() {
+                return Err(Error::custom(&value, format!(
+                    "all grid properties should be above content, but `{}` is located after `{}`",
+                    key, last_content.unwrap(),
+                )));
+            }
+        }
+
+        Ok(Grid {
+            id: value.get_id(),
+            num_columns,
+            striped,
+            spacing,
             visible,
             content: Content(content),
         })
@@ -1493,7 +1588,8 @@ impl ReadUiconf for AnyOrF32 {
 //
 
 // This struct only allows `{}` and nothing else.
-struct Empty;
+#[derive(Debug)]
+pub struct Empty;
 
 impl ReadUiconf for Empty {
     fn read_uiconf(value: &Reader) -> Result<Self, Error> {

@@ -44,7 +44,7 @@ impl Error {
         Error::InvalidType {
             actual: actual.to_owned(),
             expected: expected.to_owned(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
@@ -52,7 +52,7 @@ impl Error {
         Error::InvalidValue {
             actual: actual.to_owned(),
             expected: expected.to_owned(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
@@ -60,7 +60,7 @@ impl Error {
         Error::InvalidLength {
             actual,
             expected: expected.to_owned(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
@@ -72,7 +72,7 @@ impl Error {
                 .map(|s| format!("`{}`", s))
                 .collect::<Vec<_>>()
                 .join(", "),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
@@ -84,56 +84,56 @@ impl Error {
                 .map(|s| format!("`{}`", s))
                 .collect::<Vec<_>>()
                 .join(", "),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn duplicate_field(reader: &Reader, field: &str) -> Self {
         Error::DuplicateField {
             field: field.to_owned(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn missing_field(reader: &Reader, field: &str) -> Self {
         Error::MissingField {
             field: field.to_owned(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn unexpected_operator(reader: &Reader, op: jomini::text::Operator) -> Self {
         Error::UnexpectedOperator {
             op: op.to_string(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn unexpected_remainder(reader: &Reader, remainder: &str) -> Self {
         Error::UnexpectedRemainder {
             remainder: remainder.to_owned(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn deserialize_error(reader: &Reader, error: jomini::DeserializeError) -> Self {
         Error::DeserializeError {
             error,
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn scalar_error(reader: &Reader, error: jomini::ScalarError) -> Self {
         Error::ScalarError {
             error,
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 
     pub fn custom<T: std::fmt::Display>(reader: &Reader, msg: T) -> Self {
         Error::Custom {
             message: msg.to_string(),
-            at: reader.path().join("."),
+            at: reader.path(),
         }
     }
 }

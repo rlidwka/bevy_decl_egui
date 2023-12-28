@@ -9,11 +9,11 @@ use super::error::Error;
 
 pub struct Reader<'data, 'tokens> {
     reader: ValueReader<'data, 'tokens, Utf8Encoding>,
-    path: Vec<SmolStr>,
+    path: Vec<(SmolStr, u32)>,
 }
 
 impl<'d, 't> Reader<'d, 't> {
-    pub fn new(value: ValueReader<'d, 't, Utf8Encoding>, path: Vec<SmolStr>) -> Self {
+    pub fn new(value: ValueReader<'d, 't, Utf8Encoding>, path: Vec<(SmolStr, u32)>) -> Self {
         Self { reader: value, path }
     }
 
@@ -21,8 +21,12 @@ impl<'d, 't> Reader<'d, 't> {
         self.reader.token()
     }
 
-    pub fn path(&self) -> &[SmolStr] {
-        &self.path
+    pub fn path(&self) -> String {
+        self.path.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(".")
+    }
+
+    pub fn get_id(&self) -> crate::egui::Id {
+        crate::egui::Id::new(&self.path)
     }
 
     pub fn read<T: ReadUiconf>(&self) -> Result<T, Error> {
@@ -70,9 +74,9 @@ impl<'d, 't> Reader<'d, 't> {
             return Err(Error::unexpected_remainder(self, &remainder));
         }
         let path = self.path.clone();
-        Ok(object.fields().map(move |(key, _, value)| {
+        Ok(object.fields().enumerate().map(move |(idx, (key, _, value))| {
             let mut path = path.clone();
-            path.push(key.read_str().into());
+            path.push((key.read_str().into(), idx as u32));
             (key.read_str(), Reader::new(value, path))
         }))
     }
@@ -87,9 +91,9 @@ impl<'d, 't> Reader<'d, 't> {
         let array = self.reader.read_array().map_err(|err| Error::deserialize_error(self, err))?;
         let path = self.path.clone();
         let mut index = 0;
-        Ok(array.values().map(move |value| {
+        Ok(array.values().enumerate().map(move |(idx, value)| {
             let mut path = path.clone();
-            path.push(index.to_string().into());
+            path.push((index.to_string().into(), idx as u32));
             index += 1;
             Reader::new(value, path)
         }))
