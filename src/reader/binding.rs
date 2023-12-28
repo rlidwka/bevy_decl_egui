@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 
 use anyhow::{anyhow, Context};
-use bevy::reflect::{Reflect, ReflectMut, ReflectRef, Array, List};
+use bevy::reflect::{Reflect, ReflectMut, ReflectRef, List};
 use jomini::TextToken;
 use smol_str::SmolStr;
 

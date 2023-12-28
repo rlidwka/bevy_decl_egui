@@ -7,17 +7,10 @@ use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_uiconf_egui::reader::data_model::Trigger;
 use bevy_uiconf_egui::{AssetServerExt, UiconfPlugin, UiconfWindow};
-use serde::{Deserialize, Serialize};
 
 #[derive(Resource, Default)]
 struct MyWindow {
-    handle: Handle<UiconfWindow<MyWidgets>>,
-}
-
-#[derive(Serialize, Deserialize, TypePath, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-enum MyWidgets {
-    MyLabel,
+    handle: Handle<UiconfWindow>,
 }
 
 #[derive(Resource, Reflect, Default)]
@@ -41,7 +34,7 @@ fn main() {
             DefaultPlugins,
             WorldInspectorPlugin::new()
                 .run_if(input_toggle_active(false, KeyCode::F12)),
-            UiconfPlugin::<MyWidgets>::new(),
+            UiconfPlugin::new(),
         ))
         .register_type::<DataModel>()
         .insert_resource(WinitSettings {
@@ -59,7 +52,7 @@ fn main() {
         .add_systems(Startup, initialize_uiconf_assets)
         .add_systems(Update, display_custom_window)
         .add_systems(Update, bevy::window::close_on_esc)
-        .add_systems(Update, bevy_uiconf_egui::clear_egui_state_on_reload::<MyWidgets>)
+        .add_systems(Update, bevy_uiconf_egui::clear_egui_state_on_reload)
         .run();
 }
 
@@ -70,7 +63,7 @@ fn initialize_uiconf_assets(mut commands: Commands, asset_server: Res<AssetServe
 
 fn display_custom_window(
     mut data: ResMut<DataModel>,
-    uiconf_assets: Res<Assets<UiconfWindow<MyWidgets>>>,
+    uiconf_assets: Res<Assets<UiconfWindow>>,
     my_window: Res<MyWindow>,
     mut egui_contexts: EguiContexts,
 ) {

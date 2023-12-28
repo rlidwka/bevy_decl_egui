@@ -4,41 +4,21 @@ use bevy::prelude::*;
 use crate::{egui, Label};
 
 #[derive(Asset, TypePath, Debug)]
-pub struct EguiAsset<L: Label>{
+pub struct EguiAsset {
     pub window: crate::model::Window,
-    hash: egui::Id,
-    _labels: std::marker::PhantomData<L>,
 }
 
-impl<L: Label> EguiAsset<L> {
+impl EguiAsset {
     pub fn show(&self, data: &mut dyn Reflect, ctx: &mut egui::Context) {
         self.window.show(data, ctx);
     }
 }
 
-pub trait LabelToId<L: Label> {
-    fn to_id(&self) -> egui::Id;
-}
+#[derive(Default)]
+pub struct EguiAssetLoader;
 
-impl LabelToId<String> for &str {
-    fn to_id(&self) -> egui::Id {
-        // assert_eq!(egui::Id::new("test"), egui::Id::new("test".to_owned()));
-        egui::Id::new(*self)
-    }
-}
-
-impl<T: Label> LabelToId<T> for T {
-    fn to_id(&self) -> egui::Id {
-        egui::Id::new(self)
-    }
-}
-
-pub struct EguiAssetLoader<L> {
-    _label: std::marker::PhantomData<L>,
-}
-
-impl<L: Label> AssetLoader for EguiAssetLoader<L> {
-    type Asset = EguiAsset<L>;
+impl AssetLoader for EguiAssetLoader {
+    type Asset = EguiAsset;
     type Error = anyhow::Error;
     type Settings = EguiAssetLoaderSettings;
 
@@ -46,7 +26,7 @@ impl<L: Label> AssetLoader for EguiAssetLoader<L> {
         &'a self,
         reader: &'a mut bevy::asset::io::Reader,
         settings: &'a Self::Settings,
-        load_context: &'a mut bevy::asset::LoadContext,
+        _load_context: &'a mut bevy::asset::LoadContext,
     ) -> bevy::utils::BoxedFuture<'a, Result<Self::Asset, Self::Error>> {
         Box::pin(async move {
             if settings.version == 0 {
@@ -61,20 +41,13 @@ Add `use bevy_uiconf_egui::AssetServerExt;` to access it."));
 
             Ok(EguiAsset {
                 window: crate::model::Root::read(&buffer)?,
-                hash: egui::Id::new((load_context.asset_path(), /*settings.version*/)),
-                _labels: Default::default(),
+                //hash: egui::Id::new((load_context.asset_path(), /*settings.version*/)),
             })
         })
     }
 
     fn extensions(&self) -> &[&str] {
         &["gui"]
-    }
-}
-
-impl<L> Default for EguiAssetLoader<L> {
-    fn default() -> Self {
-        Self { _label: Default::default() }
     }
 }
 
