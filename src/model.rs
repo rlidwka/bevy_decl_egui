@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::str::FromStr;
 use std::vec;
 
-use bevy::reflect::Reflect;
+use bevy::reflect::{Reflect, ReflectMut};
 use jomini::{TextTape, TextToken};
 use strum::{Display, EnumString, EnumVariantNames, VariantNames};
 
@@ -278,12 +278,14 @@ pub enum ContentWidget {
     // containers
     Layout(Layout),
     Grid(Grid),
+    // iterator
+    Each(Each),
     // other
     EndRow(Empty),
 }
 
 impl ContentWidget {
-    const FIELDS: &'static [&'static str] = &["button", "label", "separator", "layout", "grid", "end_row"];
+    const FIELDS: &'static [&'static str] = &["button", "label", "separator", "layout", "grid", "each", "end_row"];
 
     fn read_map_value(tag: &str, value: &Reader) -> Result<Self, Error> {
         match tag {
@@ -292,6 +294,7 @@ impl ContentWidget {
             "separator" => Ok(Self::Separator (value.read()?)),
             "layout"    => Ok(Self::Layout    (value.read()?)),
             "grid"      => Ok(Self::Grid      (value.read()?)),
+            "each"      => Ok(Self::Each      (value.read()?)),
             "end_row"   => { value.read::<Empty>()?; Ok(Self::EndRow(Empty)) },
             _           => Err(Error::unknown_field(value, tag, Self::FIELDS)),
         }
@@ -304,6 +307,7 @@ impl ContentWidget {
             Self::Separator(separator) => separator.show(data, ui),
             Self::Layout(layout)       => layout.show(data, ui),
             Self::Grid(grid)           => grid.show(data, ui),
+            Self::Each(each)           => each.show(data, ui),
             Self::EndRow(_)            => ui.end_row(),
         }
     }
@@ -466,7 +470,9 @@ impl Grid {
             }
         }
 
-        let mut grid = egui::Grid::new(self.id);
+        // need to hash both position in config file (multiple grids in the same window)
+        // and data model pointer (iterating over the same grid multiple times with each)
+        let mut grid = egui::Grid::new((self.id, data as *mut dyn Reflect));
         if let Some(num_columns) = self.num_columns {
             grid = grid.num_columns(num_columns as usize);
         }
@@ -522,6 +528,70 @@ impl ReadUiconf for Grid {
             striped,
             spacing,
             visible,
+            content: Content(content),
+        })
+    }
+}
+
+//
+// Each
+//
+
+#[derive(Debug)]
+pub struct Each {
+    pub binding: BindingRef<dyn Reflect>,
+    pub content: Content,
+}
+
+impl Each {
+    const FIELDS: &'static [&'static str] = const_concat!(
+        &["in"],
+        ContentWidget::FIELDS,
+    );
+
+    fn show(&self, data: &mut dyn Reflect, ui: &mut egui::Ui) {
+        if let Ok(array) = self.binding.resolve_list_mut(data) {
+            for idx in 0..array.len() {
+                let new_data = array.get_mut(idx).unwrap();
+                self.content.show(new_data, ui);
+            }
+        }
+    }
+}
+
+impl ReadUiconf for Each {
+    fn read_uiconf(value: &Reader) -> Result<Self, Error> {
+        let mut binding = None;
+        let mut content = vec![];
+        let mut last_content = None;
+
+        for (key, value) in value.read_object()? {
+            let mut is_content = false;
+            match &*key {
+                "in" => { binding = Some(value.read()?); }
+                str => {
+                    if ContentWidget::FIELDS.contains(&str) {
+                        content.push(ContentWidget::read_map_value(str, &value)?);
+                        last_content = Some(str.to_owned());
+                        is_content = true;
+                    } else {
+                        return Err(Error::unknown_field(&value, str, Each::FIELDS));
+                    }
+                }
+            }
+
+            if !is_content && last_content.is_some() {
+                return Err(Error::custom(&value, format!(
+                    "all each properties should be above content, but `{}` is located after `{}`",
+                    key, last_content.unwrap(),
+                )));
+            }
+        }
+
+        let binding = binding.ok_or_else(|| Error::missing_field(value, "in"))?;
+
+        Ok(Each {
+            binding,
             content: Content(content),
         })
     }

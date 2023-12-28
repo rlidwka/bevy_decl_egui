@@ -54,7 +54,7 @@ fn main() {
             color: Color::RED,
             xtrue: true,
             xfalse: false,
-            trigger: Trigger::default(),
+            trigger: Trigger::default()
         })
         .add_systems(Startup, initialize_uiconf_assets)
         .add_systems(Update, display_custom_window)

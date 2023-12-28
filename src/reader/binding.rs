@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 
 use anyhow::{anyhow, Context};
-use bevy::reflect::{Reflect, ReflectMut, ReflectRef};
+use bevy::reflect::{Reflect, ReflectMut, ReflectRef, Array, List};
 use jomini::TextToken;
 use smol_str::SmolStr;
 
@@ -11,13 +11,13 @@ use super::{reader, ReadUiconf};
 
 
 #[derive(Debug)]
-pub struct BindingRef<T> {
+pub struct BindingRef<T: ?Sized> {
     name: SmolStr,
     warned: AtomicBool,
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<T> BindingRef<T> {
+impl<T: ?Sized> BindingRef<T> {
     fn change_type<U>(self) -> BindingRef<U> {
         BindingRef {
             name: self.name,
@@ -27,7 +27,7 @@ impl<T> BindingRef<T> {
     }
 }
 
-impl<T> ReadUiconf for BindingRef<T> {
+impl<T: ?Sized> ReadUiconf for BindingRef<T> {
     fn read_uiconf(value: &reader::Reader) -> Result<Self, Error> {
         let TextToken::Unquoted(scalar) = value.token() else {
             return Err(Error::invalid_type(value, value.token_type(), "unquoted scalar"));
@@ -47,6 +47,47 @@ impl<T> ReadUiconf for BindingRef<T> {
                 "@ref",
             ))
         }
+    }
+}
+
+impl<T: ?Sized> BindingRef<T> {
+    pub fn resolve_list_ref<'data>(
+        &'data self,
+        data: &'data dyn Reflect,
+    ) -> anyhow::Result<&'data dyn List> {
+        (|| -> anyhow::Result<&'data dyn List> {
+            let ReflectRef::Struct(value) = data.reflect_ref() else {
+                return Err(anyhow!("expected struct"));
+            };
+            let value = value.field(&self.name).context("key not found")?;
+
+            let ReflectRef::List(value) = value.reflect_ref() else {
+                return Err(anyhow!(
+                    "expected list, found {}",
+                    value.get_represented_type_info().map(|info| info.type_path()).unwrap_or("<unknown>")
+                ));
+            };
+            Ok(value)
+        })().map_err(|err| {
+            if !self.warned.fetch_or(true, std::sync::atomic::Ordering::Relaxed) {
+                bevy::log::warn!("failed to resolve binding @{}: {}", self.name, err);
+            }
+            err
+        })
+    }
+
+    pub fn resolve_list_mut<'data>(
+        &'data self,
+        data: &'data mut dyn Reflect,
+    ) -> anyhow::Result<&'data mut dyn List> {
+        let _ = self.resolve_list_ref(data)?;
+
+        // all errors should've been catched by `resolve_ref` above
+        let ReflectMut::Struct(value) = data.reflect_mut() else { unreachable!() };
+        let value = value.field_mut(&self.name).unwrap();
+
+        let ReflectMut::List(value) = value.reflect_mut() else { unreachable!() };
+        Ok(value)
     }
 }
 
