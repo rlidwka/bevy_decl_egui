@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevy::asset::AssetPath;
 use bevy::prelude::*;
-use bevy_inspector_egui::bevy_egui::EguiContexts;
-use loader::{EguiAsset, EguiAssetLoader, EguiAssetLoaderSettings};
-use reader::data_model::Trigger;
+
+use self::loader::{EguiAsset, EguiAssetLoader, EguiAssetLoaderSettings};
+use self::reader::data_model::Trigger;
 
 mod const_concat;
 pub mod loader;
@@ -13,12 +13,6 @@ pub mod reader;
 
 #[derive(Default)]
 pub struct UiconfPlugin;
-
-impl UiconfPlugin {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
 
 impl Plugin for UiconfPlugin {
     fn build(&self, app: &mut App) {
@@ -31,7 +25,8 @@ impl Plugin for UiconfPlugin {
 pub use loader::EguiAsset as UiconfWindow;
 
 // re-export egui
-pub use bevy_inspector_egui::egui;
+pub use bevy_egui::egui;
+pub use bevy_egui::EguiContexts;
 
 pub trait AssetServerExt {
     fn load_uiconf<'a>(&self, path: impl Into<AssetPath<'a>>) -> Handle<EguiAsset>;
@@ -48,7 +43,7 @@ impl AssetServerExt for AssetServer {
 
 pub fn clear_egui_state_on_reload(
     mut events: EventReader<AssetEvent<EguiAsset>>,
-    mut egui_contexts: EguiContexts,
+    mut egui_contexts: bevy_egui::EguiContexts,
 ) {
     if !events.is_empty() {
         egui_contexts.ctx_mut().memory_mut(|mem| *mem = Default::default());

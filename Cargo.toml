@@ -8,8 +8,8 @@ opt-level = 3
 
 [dependencies]
 anyhow = "1.0.75"
-bevy = { version = "0.12.1", features = ["dynamic_linking", "file_watcher"] }
-bevy-inspector-egui = "0.21.0"
+bevy = "0.12.1"
+bevy_egui = "0.24.0"
 downcast-rs = "1.2.0"
 jomini = "0.25.0"
 serde = "1.0.193"
@@ -17,3 +17,7 @@ serde-value = "0.7.0"
 smol_str = "0.2.0"
 strum = { version = "0.25.0", features = ["derive"] }
 thiserror = "1.0.52"
+
+[dev-dependencies]
+bevy = { version = "0.12.1", features = ["dynamic_linking", "file_watcher"] }
+bevy-inspector-egui = "0.22.0"

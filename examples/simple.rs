@@ -3,7 +3,6 @@ use std::time::Duration;
 use bevy::input::common_conditions::input_toggle_active;
 use bevy::prelude::*;
 use bevy::winit::{UpdateMode, WinitSettings};
-use bevy_inspector_egui::bevy_egui::EguiContexts;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_uiconf_egui::reader::data_model::Trigger;
 use bevy_uiconf_egui::{AssetServerExt, UiconfPlugin, UiconfWindow};
@@ -34,7 +33,7 @@ fn main() {
             DefaultPlugins,
             WorldInspectorPlugin::new()
                 .run_if(input_toggle_active(false, KeyCode::F12)),
-            UiconfPlugin::new(),
+            UiconfPlugin,
         ))
         .register_type::<DataModel>()
         .insert_resource(WinitSettings {
@@ -65,7 +64,7 @@ fn display_custom_window(
     mut data: ResMut<DataModel>,
     uiconf_assets: Res<Assets<UiconfWindow>>,
     my_window: Res<MyWindow>,
-    mut egui_contexts: EguiContexts,
+    mut egui_contexts: bevy_uiconf_egui::EguiContexts,
 ) {
     let Some(window) = uiconf_assets.get(&my_window.handle) else { return; };
 

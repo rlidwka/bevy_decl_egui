@@ -1,7 +1,7 @@
 use bevy::asset::{AssetLoader, AsyncReadExt};
 use bevy::prelude::*;
 
-use crate::{egui, Label};
+use crate::egui;
 
 #[derive(Asset, TypePath, Debug)]
 pub struct EguiAsset {
